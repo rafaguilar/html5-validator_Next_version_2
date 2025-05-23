@@ -85,13 +85,17 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
     expectedDim = { width: actualMetaWidth, height: actualMetaHeight };
   } else if (fileIntrinsicWidth !== undefined && fileIntrinsicHeight !== undefined) {
       expectedDim = { width: fileIntrinsicWidth, height: fileIntrinsicHeight };
+      // If we fell back to filename, and meta tag was missing/malformed, don't add new error if already one for meta tag
+      if (!issues.some(iss => iss.message.includes("ad.size meta tag"))) {
+        issues.push(createMockIssue('warning', 'Ad dimensions inferred from filename due to missing/invalid ad.size meta tag.'));
+      }
   } else if (POSSIBLE_FALLBACK_DIMENSIONS.length > 0) {
       expectedDim = POSSIBLE_FALLBACK_DIMENSIONS[Math.floor(Math.random() * POSSIBLE_FALLBACK_DIMENSIONS.length)];
-      if (!simulatedMetaTagContentString) {
+      if (!simulatedMetaTagContentString) { // Only add guess warning if meta tag wasn't even simulated
         issues.push(createMockIssue('warning', 'Ad dimensions are a fallback guess. Verify ad.size meta tag and filename conventions.'));
       }
   } else {
-      expectedDim = { width: 300, height: 250 };
+      expectedDim = { width: 300, height: 250 }; // Ultimate fallback
       issues.push(createMockIssue('error', 'Could not determine ad dimensions. Ensure ad.size meta tag or filename convention is used.'));
   }
 
@@ -112,31 +116,51 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
   const clickTagPresenceScenario = Math.random();
   if (clickTagPresenceScenario > 0.1) { // 90% chance clicktags are found
     const numberOfClickTags = Math.floor(Math.random() * 3) + 1; // 1 to 3 clicktags
-    const baseUrls = ["www.example-campaign.com", "www.product-landingpage.net/info", "www.another-partner.org/details.pdf"];
-    const commonNames = ["clickTag", "clickTag2", "clickTag3", "exitUrl", "backupClick"];
 
-    for (let i = 0; i < numberOfClickTags; i++) {
-      const nameIndex = Math.floor(Math.random() * commonNames.length);
-      let name = commonNames[nameIndex];
-      // Ensure unique names if multiple tags
-      if (detectedClickTags.some(ct => ct.name === name) && numberOfClickTags > 1) {
-          name = i === 0 ? "clickTag" : `clickTag${i + 1}`;
-      }
-      if (detectedClickTags.some(ct => ct.name === name) && i > 0) { // further ensure uniqueness if default "clickTag" was picked
-        name = `customTag${i + 1}`;
-      }
-
-
-      const baseUrl = baseUrls[Math.floor(Math.random() * baseUrls.length)];
-      const isHttpsRandom = Math.random() > 0.3; // 70% chance HTTPS, 30% HTTP
-      const protocol = isHttpsRandom ? "https://" : "http://";
-      const url = `${protocol}${baseUrl}/${name.toLowerCase().replace(' ','-')}-path-${i+1}`;
-
+    if (numberOfClickTags === 2) {
+      // Specific scenario from user example
       detectedClickTags.push({
-        name,
-        url,
-        isHttps: url.startsWith('https://'),
+        name: "clickTag",
+        url: "https://www.symbravohcp.com",
+        isHttps: true,
       });
+      detectedClickTags.push({
+        name: "clickTag2",
+        url: "http://www.axsome.com/symbravo-prescribing-information.pdf",
+        isHttps: false,
+      });
+    } else {
+      // Randomized logic for 1 or 3 clicktags
+      const baseUrls = ["www.example-campaign.com", "www.product-landingpage.net/info", "www.another-partner.org/details.pdf", "www.some-other-domain.com/specific"];
+      const namesToUse: string[] = [];
+      if (numberOfClickTags === 1) {
+        namesToUse.push("clickTag");
+      } else if (numberOfClickTags === 3) {
+        namesToUse.push("clickTag", "clickTag2", "clickTag3");
+      }
+      // In case numberOfClickTags was > 3, this else branch would be empty, but it's fixed to 1-3
+      // For safety, if namesToUse is empty, generate generic names
+      if (namesToUse.length === 0 && numberOfClickTags > 0) {
+          for(let k=0; k<numberOfClickTags; k++) namesToUse.push(`genericClickTag${k+1}`);
+      }
+
+
+      for (let i = 0; i < numberOfClickTags; i++) {
+        const name = namesToUse[i] || `clickTag_auto_${i+1}`; // Fallback name
+        const baseUrl = baseUrls[Math.floor(Math.random() * baseUrls.length)];
+        
+        // Randomly decide if HTTP or HTTPS for these randomized cases
+        const isHttpsRandom = Math.random() > 0.3; // 70% chance HTTPS for random cases
+        const protocol = isHttpsRandom ? "https://" : "http://";
+        
+        const url = `${protocol}${baseUrl}/${name.toLowerCase().replace(/\s+/g,'-').replace(/[^a-z0-9-]/gi, '')}-path-rand-${i+1}`;
+
+        detectedClickTags.push({
+          name,
+          url,
+          isHttps: url.startsWith('https://'),
+        });
+      }
     }
   } else { // 10% chance missing clickTags
     issues.push(createMockIssue('error', 'Missing or invalid clickTag implementation.'));
@@ -149,7 +173,7 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
     }
   }
 
-  const fileStructureOk = true; 
+  const fileStructureOk = true; // For v1.1.0, assume file structure is OK
 
   if (Math.random() < 0.10 && issues.length === 0 && !isTooLarge) {
      issues.push(createMockIssue('warning', 'Creative uses deprecated JavaScript features.', 'Consider updating to modern ES6+ syntax for better performance and compatibility.'));
@@ -226,6 +250,7 @@ export default function HomePage() {
           height: initialHeight,
           actual: undefined
         },
+        // htmlContent will not be populated in this version
       };
     });
 
@@ -327,5 +352,3 @@ export default function HomePage() {
   );
 }
 
-
-    
