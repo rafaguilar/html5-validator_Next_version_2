@@ -92,6 +92,7 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
         // Error for missing/malformed meta tag is generated above.
       }
   } else if (POSSIBLE_FALLBACK_DIMENSIONS.length > 0) {
+      // If meta tag was problematic AND filename had no dimensions, pick a random expected dimension
       expectedDim = POSSIBLE_FALLBACK_DIMENSIONS[Math.floor(Math.random() * POSSIBLE_FALLBACK_DIMENSIONS.length)];
       if (!simulatedMetaTagContentString) { // Only issue this if meta tag was missing entirely
         issues.push(createMockIssue('warning', 'Ad dimensions are a fallback guess. Verify ad.size meta tag and filename conventions.'));
@@ -117,26 +118,24 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
 
   const clickTagScenario = Math.random();
   if (clickTagScenario > 0.1) { // 90% chance clicktags are found
-    // Simulate clickTag1
-    const ct1UrlIsActuallyHttps = Math.random() > 0.2; // 80% chance of this URL being HTTPS
+    // Simulate clickTag1 - Always HTTPS as per user example
     const ct1BaseUrl = "www.symbravohcp.com";
-    const ct1Url = `${ct1UrlIsActuallyHttps ? 'https' : 'http'}://${ct1BaseUrl}`;
+    const ct1Url = `https://${ct1BaseUrl}`; // Hardcoded to HTTPS
     const ct1: ClickTagInfo = {
       name: 'clickTag',
       url: ct1Url,
-      isHttps: ct1Url.startsWith('https://') // Derive from the actual URL
+      isHttps: ct1Url.startsWith('https://')
     };
     detectedClickTags.push(ct1);
 
-    // Simulate clickTag2 (70% chance if clickTag1 exists)
+    // Simulate clickTag2 (70% chance if clickTag1 exists) - Always HTTP if present
     if (Math.random() > 0.3) {
-      const ct2UrlIsActuallyHttps = Math.random() > 0.5; // 50% chance of this URL being HTTPS
       const ct2BaseUrl = "www.axsome.com/symbravo-prescribing-information.pdf";
-      const ct2Url = `${ct2UrlIsActuallyHttps ? 'https' : 'http'}://${ct2BaseUrl}`;
+      const ct2Url = `http://${ct2BaseUrl}`; // Hardcoded to HTTP
       const ct2: ClickTagInfo = {
         name: 'clickTag2',
         url: ct2Url,
-        isHttps: ct2Url.startsWith('https://') // Derive from the actual URL
+        isHttps: ct2Url.startsWith('https://')
       };
       detectedClickTags.push(ct2);
     }
@@ -153,7 +152,7 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
   }
 
 
-  const fileStructureOk = true;
+  const fileStructureOk = true; // Assume true for mock purposes based on previous resolution
 
   if (Math.random() < 0.10 && issues.length === 0 && !isTooLarge) {
      issues.push(createMockIssue('warning', 'Creative uses deprecated JavaScript features.', 'Consider updating to modern ES6+ syntax for better performance and compatibility.'));
@@ -330,3 +329,4 @@ export default function HomePage() {
     </div>
   );
 }
+
