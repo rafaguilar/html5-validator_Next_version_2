@@ -3,7 +3,6 @@
 
 import type { ReactNode } from 'react';
 import React, { useRef, useState } from 'react';
-// import Image from 'next/image'; // Keep for fallback, but iframe is primary
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import type { ValidationResult, ValidationIssue, ClickTagInfo } from '@/types';
@@ -71,16 +70,13 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
         logging: false,
         allowTaint: true, // Important for iframes
         onclone: (documentClone) => {
-          // Attempt to deal with iframe content in cloned document for html2canvas
-          // This can be tricky and might not always work perfectly for complex srcDoc content
           Array.from(documentClone.querySelectorAll('iframe')).forEach((iframe, index) => {
             const originalIframe = input.querySelectorAll('iframe')[index];
-            if (originalIframe && originalIframe.contentWindow && originalIframe.contentWindow.document.body) {
+            // @ts-ignore: srcdoc exists on iframe
+            if (originalIframe && originalIframe.srcdoc) {
               try {
                 // @ts-ignore: srcdoc exists on iframe
                 iframe.srcdoc = originalIframe.srcdoc; 
-                // It's very hard to get html2canvas to render srcdoc iframe content correctly.
-                // A more robust solution for PDF might involve server-side rendering or a different PDF library.
               } catch (e) {
                 console.warn("Could not clone iframe content for PDF", e);
               }
@@ -98,12 +94,10 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
 
           const imgProps = pdf.getImageProperties(imgData);
           const pdfWidth = pdf.internal.pageSize.getWidth();
-          // const pdfHeight = pdf.internal.pageSize.getHeight(); // Not used for scaling logic here
           
           const canvasWidth = imgProps.width;
           const canvasHeight = imgProps.height;
 
-          // Scale image to fit PDF width, maintaining aspect ratio
           const ratio = pdfWidth / canvasWidth;
           const scaledWidth = canvasWidth * ratio;
           const scaledHeight = canvasHeight * ratio;
@@ -111,28 +105,36 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
           let y = 20; 
           const pageHeightWithMargin = pdf.internal.pageSize.getHeight() - 40; 
           let heightLeft = scaledHeight;
-          let currentPositionOnImage = 0;
+          let currentPositionOnImage = 0; // Tracks the y-position on the original canvas image
+
+          // Add title to the PDF
+          pdf.setFontSize(18);
+          pdf.text("Validation Report", pdfWidth / 2, y + 10, { align: "center" });
+          y += 30;
+
+
+          let positionOnCanvas = 0; // Y-coordinate on the source canvas
 
           while (heightLeft > 0) {
-            const pageSliceHeight = Math.min(pageHeightWithMargin, heightLeft);
-            const imageSliceHeightInOriginalPixels = pageSliceHeight / ratio;
+            const pageContentHeight = Math.min(pageHeightWithMargin - (heightLeft === scaledHeight ? y : 20) , heightLeft); // available height on current PDF page
+            const sourceRectHeight = pageContentHeight / ratio; // height of the slice from original canvas
 
             pdf.addImage(
               imgData, 
               'PNG', 
-              0, // x
-              y, // y
-              scaledWidth, 
-              scaledHeight,
+              15, // x margin
+              heightLeft === scaledHeight ? y : 20, // y position on PDF page
+              scaledWidth - 30, // width on PDF page (with margins)
+              pageContentHeight, // height of the image slice on PDF page
               undefined, // alias
               'FAST', // compression
               0, // rotation
-              0, // xInImage
-              currentPositionOnImage / ratio // yInImage
+              0, // x in original image (always 0 for full width slice)
+              positionOnCanvas // y in original image
             );
             
-            heightLeft -= pageSliceHeight;
-            currentPositionOnImage += imageSliceHeightInOriginalPixels;
+            heightLeft -= pageContentHeight;
+            positionOnCanvas += sourceRectHeight;
 
             if (heightLeft > 0) {
               pdf.addPage();
@@ -146,7 +148,7 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
         })
         .finally(() => {
           setIsGeneratingPdf(false);
-           iframes.forEach(iframe => iframe.style.visibility = ''); // Restore original visibility
+           iframes.forEach(iframe => iframe.style.visibility = ''); 
         });
     }
   };
@@ -282,15 +284,12 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
                           srcDoc={result.htmlContent}
                           width={previewWidth}
                           height={previewHeight}
-                          sandbox="allow-scripts" // Allows scripts; consider implications if this were not mock data
+                          sandbox="allow-scripts allow-same-origin" // Added allow-same-origin
                           className="border rounded shadow-md bg-background"
                           style={{border: '1px solid #ccc', display: 'block', transformOrigin: 'top left' }}
-                          // The iframe will scale if its container is smaller than its width/height.
-                          // For very large banners, you might need additional scaling CSS on the iframe itself or its wrapper.
                         />
                       ) : (
-                        // Fallback to placeholder if htmlContent is not available
-                        <img // Using img tag directly for placeholder
+                        <img
                           src={`https://placehold.co/${previewWidth}x${previewHeight}.png`}
                           alt={`Banner Preview ${previewWidth}x${previewHeight}`}
                           width={previewWidth}
@@ -371,3 +370,4 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
     </div>
   );
 }
+
