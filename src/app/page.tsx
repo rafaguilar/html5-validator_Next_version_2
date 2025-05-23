@@ -3,6 +3,7 @@
 
 import React, { useState, useEffect } from 'react';
 import JSZip from 'jszip';
+import type { JSZipObject } from 'jszip';
 import { AppHeader } from '@/components/layout/header';
 import { FileUploader } from '@/components/html-validator/file-uploader';
 import { ValidationResults } from '@/components/html-validator/validation-results';
@@ -10,9 +11,8 @@ import type { ValidationResult, ValidationIssue, ClickTagInfo } from '@/types';
 import { useToast } from "@/hooks/use-toast";
 
 const MOCK_MAX_FILE_SIZE = 2.2 * 1024 * 1024; // 2.2MB
-const MOCK_EXPECTED_DIMENSIONS_FALLBACK = [{width: 300, height: 250}, {width: 728, height: 90}, {width: 160, height: 600}]; // Fallback if no dimensions from filename or meta
+const MOCK_EXPECTED_DIMENSIONS_FALLBACK = [{width: 300, height: 250}, {width: 728, height: 90}, {width: 160, height: 600}]; 
 
-// Simulate a wider range of possible actual dimensions that could be in a meta tag if filename doesn't specify
 const POSSIBLE_ACTUAL_DIMENSIONS_FROM_META_FALLBACK = [
   { width: 300, height: 250 }, { width: 728, height: 90 },
   { width: 160, height: 600 }, { width: 300, height: 600 },
@@ -29,8 +29,186 @@ const createMockIssue = (type: 'error' | 'warning', message: string, details?: s
   details,
 });
 
+const getMimeTypeFromPath = (filePath: string): string => {
+  const extension = filePath.split('.').pop()?.toLowerCase();
+  switch (extension) {
+    case 'png': return 'image/png';
+    case 'jpg':
+    case 'jpeg': return 'image/jpeg';
+    case 'gif': return 'image/gif';
+    case 'svg': return 'image/svg+xml';
+    case 'css': return 'text/css';
+    case 'js': return 'application/javascript';
+    case 'html': return 'text/html';
+    default: return 'application/octet-stream';
+  }
+};
+
+const resolveAssetPathInZip = (htmlFilePath: string, assetPath: string, zip: JSZip): string | null => {
+  if (assetPath.startsWith('data:') || assetPath.startsWith('http:') || assetPath.startsWith('https:')) {
+    return null; 
+  }
+
+  const htmlDir = htmlFilePath.substring(0, htmlFilePath.lastIndexOf('/') + 1);
+  let fullPath;
+
+  if (assetPath.startsWith('/')) {
+    fullPath = assetPath.substring(1);
+  } else {
+    const pathParts = (htmlDir + assetPath).split('/');
+    const resolvedParts: string[] = [];
+    for (const part of pathParts) {
+      if (part === '.' || part === '') continue;
+      if (part === '..') {
+        if (resolvedParts.length > 0) resolvedParts.pop();
+      } else {
+        resolvedParts.push(part);
+      }
+    }
+    fullPath = resolvedParts.join('/');
+  }
+  
+  const zipFileExtensions = ['', '.html', '.htm', '.css', '.js']; // Common extensions to try
+  if (zip.file(fullPath)) return fullPath;
+
+  // Try common variations if the direct path is not found
+  for (const ext of zipFileExtensions) {
+    if (zip.file(fullPath + ext)) return fullPath + ext;
+  }
+  if (assetPath.startsWith('/') && zip.file(assetPath.substring(1))) return assetPath.substring(1);
+  if (zip.file(assetPath)) return assetPath;
+
+
+  console.warn(`Could not resolve asset path: ${assetPath} (relative to ${htmlFilePath}) resolved to ${fullPath}`);
+  return null;
+};
+
+
+const extractAndProcessHtmlFromZip = async (file: File): Promise<string | undefined> => {
+  try {
+    const zip = await JSZip.loadAsync(file);
+    let htmlFile: JSZipObject | null = zip.file("index.html");
+    let htmlFilePath = "index.html";
+
+    if (!htmlFile) {
+      const htmlFiles = zip.file(/\.html?$/i);
+      const rootHtmlFiles = htmlFiles.filter(f => !f.name.includes('/') && f.name !== file.name); // Exclude the zip file itself
+      if (rootHtmlFiles.length > 0) {
+        htmlFile = rootHtmlFiles[0];
+        htmlFilePath = rootHtmlFiles[0].name;
+      } else if (htmlFiles.length > 0) {
+        htmlFile = htmlFiles[0];
+        htmlFilePath = htmlFiles[0].name;
+      }
+    }
+
+    if (htmlFile) {
+      const htmlContent = await htmlFile.async("string");
+      const doc = new DOMParser().parseFromString(htmlContent, "text/html");
+
+      // Inline CSS
+      const linkNodes = Array.from(doc.querySelectorAll('link[rel="stylesheet"][href]'));
+      await Promise.all(linkNodes.map(async (linkNode) => {
+        const href = linkNode.getAttribute('href');
+        if (href) {
+          const assetZipPath = resolveAssetPathInZip(htmlFilePath, href, zip);
+          if (assetZipPath) {
+            const assetFile = zip.file(assetZipPath);
+            if (assetFile) {
+              try {
+                const cssContent = await assetFile.async('string');
+                const styleNode = doc.createElement('style');
+                styleNode.textContent = cssContent;
+                linkNode.parentNode?.replaceChild(styleNode, linkNode);
+              } catch (e) {
+                console.warn(`Failed to inline CSS ${href}:`, e);
+              }
+            }
+          }
+        }
+      }));
+
+      // Inline JavaScript
+      const scriptNodes = Array.from(doc.querySelectorAll('script[src]'));
+      await Promise.all(scriptNodes.map(async (scriptNode) => {
+        const src = scriptNode.getAttribute('src');
+        if (src) {
+          const assetZipPath = resolveAssetPathInZip(htmlFilePath, src, zip);
+          if (assetZipPath) {
+            const assetFile = zip.file(assetZipPath);
+            if (assetFile) {
+              try {
+                const jsContent = await assetFile.async('string');
+                const newScriptNode = doc.createElement('script');
+                newScriptNode.textContent = jsContent;
+                // Optionally copy other attributes like type, async, defer
+                // scriptNode.getAttributeNames().forEach(attrName => {
+                //   if (attrName !== 'src') newScriptNode.setAttribute(attrName, scriptNode.getAttribute(attrName)!);
+                // });
+                scriptNode.parentNode?.replaceChild(newScriptNode, scriptNode);
+              } catch (e) {
+                console.warn(`Failed to inline JS ${src}:`, e);
+              }
+            }
+          }
+        }
+      }));
+
+      // Inline Images
+      const imgNodes = Array.from(doc.querySelectorAll('img[src]'));
+      await Promise.all(imgNodes.map(async (imgNode) => {
+        const src = imgNode.getAttribute('src');
+        if (src && !src.startsWith('data:')) {
+          const assetZipPath = resolveAssetPathInZip(htmlFilePath, src, zip);
+          if (assetZipPath) {
+            const assetFile = zip.file(assetZipPath);
+            if (assetFile) {
+              try {
+                const base64Content = await assetFile.async('base64');
+                const mimeType = getMimeTypeFromPath(assetZipPath);
+                imgNode.setAttribute('src', `data:${mimeType};base64,${base64Content}`);
+              } catch (e) {
+                console.warn(`Failed to inline image ${src}:`, e);
+              }
+            }
+          }
+        }
+      }));
+      
+      // Inline <source src="...">
+      const sourceNodes = Array.from(doc.querySelectorAll('source[src]'));
+       await Promise.all(sourceNodes.map(async (sourceNode) => {
+        const src = sourceNode.getAttribute('src');
+        if (src && !src.startsWith('data:')) {
+          const assetZipPath = resolveAssetPathInZip(htmlFilePath, src, zip);
+          if (assetZipPath) {
+            const assetFile = zip.file(assetZipPath);
+            if (assetFile) {
+              try {
+                const base64Content = await assetFile.async('base64');
+                const mimeType = getMimeTypeFromPath(assetZipPath); // Assumes getMimeTypeFromPath handles video/audio types too
+                sourceNode.setAttribute('src', `data:${mimeType};base64,${base64Content}`);
+              } catch (e) {
+                console.warn(`Failed to inline source ${src}:`, e);
+              }
+            }
+          }
+        }
+      }));
+
+
+      return doc.documentElement.outerHTML;
+    }
+    return undefined;
+  } catch (error) {
+    console.error("Error processing ZIP file or inlining assets:", file.name, error);
+    return undefined;
+  }
+};
+
+
 const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id' | 'fileName' | 'fileSize' | 'htmlContent'>> => {
-  await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 500)); // Simulate network delay
+  await new Promise(resolve => setTimeout(resolve, 100 + Math.random() * 200)); 
 
   const issues: ValidationIssue[] = [];
   let status: ValidationResult['status'] = 'success';
@@ -47,12 +225,10 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
   if (filenameDimMatch && filenameDimMatch[1] && filenameDimMatch[2]) {
     fileIntrinsicWidth = parseInt(filenameDimMatch[1], 10);
     fileIntrinsicHeight = parseInt(filenameDimMatch[2], 10);
-    // If filename provides dimensions, assume the ad.size meta tag is present and correctly reflects these dimensions.
-    actualMetaWidth = fileIntrinsicWidth;
+    actualMetaWidth = fileIntrinsicWidth; // Assume meta tag is correct if filename has dims
     actualMetaHeight = fileIntrinsicHeight;
     simulatedMetaTagContentString = `width=${fileIntrinsicWidth},height=${fileIntrinsicHeight}`;
   } else {
-    // Filename does NOT provide dimensions. Simulate random meta tag scenarios.
     const metaTagScenario = Math.random();
     if (metaTagScenario < 0.05) { 
       simulatedMetaTagContentString = null; 
@@ -91,8 +267,7 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
     if (fileIntrinsicWidth !== undefined && fileIntrinsicHeight !== undefined) {
         expectedDim = { width: fileIntrinsicWidth, height: fileIntrinsicHeight };
     } else if (MOCK_EXPECTED_DIMENSIONS_FALLBACK.length > 0) {
-        // Fallback to the first item in MOCK_EXPECTED_DIMENSIONS_FALLBACK or a default
-        expectedDim = MOCK_EXPECTED_DIMENSIONS_FALLBACK[0];
+        expectedDim = MOCK_EXPECTED_DIMENSIONS_FALLBACK[0]; // Use a default from the list
     } else {
         expectedDim = { width: 300, height: 250 }; // Absolute fallback
     }
@@ -114,7 +289,7 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
 
   // ClickTag Simulation (90% chance to find specific clickTags)
   const clickTagScenario = Math.random();
-  if (clickTagScenario > 0.1) {
+  if (clickTagScenario > 0.1 || (fileIntrinsicWidth && fileIntrinsicHeight)) { // More likely to find for named dimension files
     const ct1 = { name: 'clickTag', url: "https://www.symbravohcp.com", isHttps: true };
     const ct2 = { name: 'clickTag2', url: "http://www.axsome.com/symbravo-prescribing-information.pdf", isHttps: false };
     detectedClickTags.push(ct1, ct2);
@@ -122,13 +297,12 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
     if (!ct2.isHttps) {
       issues.push(createMockIssue('warning', `ClickTag '${ct2.name}' uses non-HTTPS URL.`, `URL: ${ct2.url}`));
     }
-  } else { // 10% chance no clickTags are found
+  } else { // 10% chance no clickTags are found (unless filename has dimensions)
     issues.push(createMockIssue('error', 'Missing or invalid clickTag implementation.'));
   }
   
   const fileStructureOk = true; // Assume valid for mock
 
-  // Random warning if no other issues (and not too large, as that might be a warning itself)
   if (Math.random() < 0.10 && issues.length === 0 && !isTooLarge) {
      issues.push(createMockIssue('warning', 'Creative uses deprecated JavaScript features.', 'Consider updating to modern ES6+ syntax for better performance and compatibility.'));
   }
@@ -165,29 +339,6 @@ export default function HomePage() {
   const [validationResults, setValidationResults] = useState<ValidationResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const { toast } = useToast();
-
-  const extractHtmlFromZip = async (file: File): Promise<string | undefined> => {
-    try {
-      const zip = await JSZip.loadAsync(file);
-      let htmlFile = zip.file("index.html");
-      if (!htmlFile) {
-        const htmlFiles = zip.file(/\.html?$/i);
-        if (htmlFiles.length > 0) {
-          // Prefer HTML files at the root
-          const rootHtmlFiles = htmlFiles.filter(f => !f.name.includes('/'));
-          htmlFile = rootHtmlFiles.length > 0 ? rootHtmlFiles[0] : htmlFiles[0];
-        }
-      }
-      if (htmlFile) {
-        return await htmlFile.async("string");
-      }
-      return undefined;
-    } catch (error) {
-      console.error("Error unzipping file or reading HTML:", file.name, error);
-      return undefined;
-    }
-  };
-
 
   const handleValidateFiles = async () => {
     if (selectedFiles.length === 0) {
@@ -226,7 +377,7 @@ export default function HomePage() {
           height: initialHeight,
           actual: undefined
         },
-        htmlContent: undefined, // Will be populated later
+        htmlContent: undefined,
       };
     });
 
@@ -234,21 +385,19 @@ export default function HomePage() {
     setValidationResults(initialResults);
     
     const resultsPromises = selectedFiles.map(async (file, index) => {
-      let htmlContent: string | undefined;
+      let processedHtmlContent: string | undefined;
       try {
-        htmlContent = await extractHtmlFromZip(file);
+        processedHtmlContent = await extractAndProcessHtmlFromZip(file);
       } catch (e) {
-        console.error(`Failed to extract HTML for ${file.name}`, e);
-        // Potentially add an issue here if HTML extraction is critical
+        console.error(`Failed to extract and process HTML for ${file.name}`, e);
       }
 
       const mockResultPart = await mockValidateFile(file);
       
       return {
-        ...initialResults[index], // Preserve ID and initial file info
-        ...mockResultPart, // Get status, issues, etc. from mock
-        htmlContent, // Add the extracted HTML content
-        // Ensure id, fileName, fileSize are correctly from initialResults if not in mockResultPart
+        ...initialResults[index], 
+        ...mockResultPart, 
+        htmlContent: processedHtmlContent, 
         id: initialResults[index].id,
         fileName: file.name,
         fileSize: file.size,
@@ -330,3 +479,6 @@ export default function HomePage() {
     </div>
   );
 }
+
+
+    
