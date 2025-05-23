@@ -178,29 +178,45 @@ const extractAndProcessHtmlFromZip = async (file: File): Promise<string | undefi
     const zipFileEntries = Object.keys(zip.files);
     console.log('[extractAndProcessHtmlFromZip] ZIP file entries:', zipFileEntries);
 
-    let htmlFileEntry: JSZipObject | null = zip.file("index.html");
-    let htmlFilePath = "index.html";
+    let htmlFileEntry: JSZipObject | null = null;
+    let htmlFilePath = ""; // Will store the full path of the HTML file in the zip
+    let baseDirFromZipRoot = ""; // Will store the base directory if files are in a subfolder
 
+    // Try common HTML filenames at root first
+    const commonRootHtmlNames = ["index.html", "Index.html"];
+    for (const name of commonRootHtmlNames) {
+        if (zip.file(name)) {
+            htmlFileEntry = zip.file(name);
+            htmlFilePath = name;
+            console.log(`[extractAndProcessHtmlFromZip] Found HTML file at root: ${htmlFilePath}`);
+            break;
+        }
+    }
+    
+    // If not at root, find the first .html file (often within a single root folder)
     if (!htmlFileEntry) {
-      const rootHtmlFiles = zipFileEntries.filter(name => !name.includes('/') && name.toLowerCase().endsWith('.html') && name !== file.name);
-      if (rootHtmlFiles.length > 0) {
-        htmlFilePath = rootHtmlFiles[0];
-        htmlFileEntry = zip.file(htmlFilePath);
-        console.log(`[extractAndProcessHtmlFromZip] Found HTML file at root: ${htmlFilePath}`);
-      } else {
-        const anyHtmlFiles = zipFileEntries.filter(name => name.toLowerCase().endsWith('.html'));
+        const anyHtmlFiles = zipFileEntries.filter(name => 
+            !name.startsWith('__MACOSX/') && // Ignore macOS specific metadata folders
+            !name.endsWith('/') && // Ignore directory entries
+            name.toLowerCase().endsWith('.html')
+        );
+
         if (anyHtmlFiles.length > 0) {
-            htmlFilePath = anyHtmlFiles[0];
+            htmlFilePath = anyHtmlFiles[0]; // Take the first one found
             htmlFileEntry = zip.file(htmlFilePath);
-            console.log(`[extractAndProcessHtmlFromZip] Found HTML file in subdirectory (or non-standard name): ${htmlFilePath}`);
+            console.log(`[extractAndProcessHtmlFromZip] Found HTML file (possibly in subdir): ${htmlFilePath}`);
         } else {
             console.warn(`[extractAndProcessHtmlFromZip] No HTML file found in ZIP: ${file.name}`);
             return undefined;
         }
-      }
-    } else {
-       console.log(`[extractAndProcessHtmlFromZip] Found HTML file at root: index.html`);
     }
+
+    // Determine base directory from HTML file path
+    if (htmlFilePath.includes('/')) {
+        baseDirFromZipRoot = htmlFilePath.substring(0, htmlFilePath.lastIndexOf('/') + 1);
+        console.log(`[extractAndProcessHtmlFromZip] Determined base directory in ZIP: '${baseDirFromZipRoot}'`);
+    }
+
 
     if (htmlFileEntry) {
       const htmlContent = await htmlFileEntry.async("string");
@@ -336,31 +352,31 @@ const extractAndProcessHtmlFromZip = async (file: File): Promise<string | undefi
       }));
 
       // Proactive inlining of common local CSS files potentially loaded by scripts
-      const commonCssFilePaths = ['style.css', 'css/style.css', 'main.css', 'css/main.css'];
-      // console.log(`[extractAndProcessHtmlFromZip] Starting proactive CSS inlining. Checking paths: ${commonCssFilePaths.join(', ')}`);
-      for (const commonPath of commonCssFilePaths) {
-        if (!alreadyInlinedCssPaths.has(commonPath)) { // Check against resolved paths
-          const cssFileEntry = zip.file(commonPath); // Check if this exact path exists
+      const commonCssFileSuffixes = ['style.css', 'css/style.css', 'main.css', 'css/main.css'];
+      console.log(`[extractAndProcessHtmlFromZip] Starting proactive CSS inlining. Base dir in ZIP: '${baseDirFromZipRoot}'. Checking suffixes: ${commonCssFileSuffixes.join(', ')}`);
+      
+      for (const commonSuffix of commonCssFileSuffixes) {
+        const fullCssPathInZip = baseDirFromZipRoot + commonSuffix;
+        if (!alreadyInlinedCssPaths.has(fullCssPathInZip)) { 
+          const cssFileEntry = zip.file(fullCssPathInZip); 
           if (cssFileEntry) {
-            console.log(`[extractAndProcessHtmlFromZip] Attempting to proactively inline CSS: ${commonPath}`);
+            console.log(`[extractAndProcessHtmlFromZip] Attempting to proactively inline CSS: ${fullCssPathInZip}`);
             try {
               const rawCssContent = await cssFileEntry.async('string');
-              // console.log(`[extractAndProcessHtmlFromZip] Raw CSS for proactive ${commonPath}:\n${rawCssContent.substring(0,300)}...`);
-              const processedCssContent = await inlineCssUrls(rawCssContent, commonPath, zip); // Use commonPath as base for its internal URLs
-              // console.log(`[extractAndProcessHtmlFromZip] Processed CSS for proactive ${commonPath}:\n${processedCssContent.substring(0,300)}...`);
+              const processedCssContent = await inlineCssUrls(rawCssContent, fullCssPathInZip, zip); 
               const styleNode = doc.createElement('style');
               styleNode.textContent = processedCssContent;
               doc.head.appendChild(styleNode);
-              alreadyInlinedCssPaths.add(commonPath); // Mark this exact path as inlined
-              console.log(`[extractAndProcessHtmlFromZip] Successfully proactively inlined CSS: ${commonPath}`);
+              alreadyInlinedCssPaths.add(fullCssPathInZip); 
+              console.log(`[extractAndProcessHtmlFromZip] Successfully proactively inlined CSS: ${fullCssPathInZip}`);
             } catch (e) {
-              console.warn(`[extractAndProcessHtmlFromZip] Failed to proactively inline CSS ${commonPath}:`, e);
+              console.warn(`[extractAndProcessHtmlFromZip] Failed to proactively inline CSS ${fullCssPathInZip}:`, e);
             }
           } else {
-            // console.log(`[extractAndProcessHtmlFromZip] Proactive CSS path not found in ZIP: ${commonPath}`);
+            // console.log(`[extractAndProcessHtmlFromZip] Proactive CSS path not found in ZIP: ${fullCssPathInZip}`);
           }
         } else {
-          // console.log(`[extractAndProcessHtmlFromZip] Proactive CSS path already inlined (from <link>): ${commonPath}`);
+          // console.log(`[extractAndProcessHtmlFromZip] Proactive CSS path already inlined (from <link>): ${fullCssPathInZip}`);
         }
       }
       console.log(`[extractAndProcessHtmlFromZip] Finished processing. Serializing HTML.`);
