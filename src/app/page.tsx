@@ -11,17 +11,15 @@ import type { ValidationResult, ValidationIssue, ClickTagInfo } from '@/types';
 import { useToast } from "@/hooks/use-toast";
 
 const MOCK_MAX_FILE_SIZE = 2.2 * 1024 * 1024; // 2.2MB
-// This list is now primarily a fallback if meta tag is missing/invalid AND filename has no dimensions
-const MOCK_EXPECTED_DIMENSIONS_FALLBACK = [{width: 300, height: 250}, {width: 728, height: 90}, {width: 160, height: 600}]; 
-
-// Used if filename has no dims AND meta tag is being simulated as "valid but random"
-const POSSIBLE_ACTUAL_DIMENSIONS_FROM_META_FALLBACK = [
+const POSSIBLE_ACTUAL_DIMENSIONS_FROM_META_FALLBACK = [ // Used if filename has no dims AND meta tag is being simulated as "valid but random"
   { width: 300, height: 250 }, { width: 728, height: 90 },
   { width: 160, height: 600 }, { width: 300, height: 600 },
   { width: 468, height: 60 },  { width: 120, height: 600 },
   { width: 320, height: 50 },   { width: 300, height: 50 },
   { width: 970, height: 250 }, { width: 336, height: 280 },
 ];
+// Fallback if filename has no dims AND meta tag is missing/invalid
+const MOCK_EXPECTED_DIMENSIONS_FALLBACK = POSSIBLE_ACTUAL_DIMENSIONS_FROM_META_FALLBACK;
 
 
 const createMockIssue = (type: 'error' | 'warning', message: string, details?: string): ValidationIssue => ({
@@ -54,68 +52,67 @@ const getMimeTypeFromPath = (filePath: string): string => {
 
 const resolveAssetPathInZip = (baseFilePath: string, assetPath: string, zip: JSZip): string | null => {
   if (assetPath.startsWith('data:') || assetPath.startsWith('http:') || assetPath.startsWith('https:')) {
-    return null; 
+    return null; // It's a data URI or an absolute external URL, not a local zip asset
   }
 
   const baseDir = baseFilePath.includes('/') ? baseFilePath.substring(0, baseFilePath.lastIndexOf('/') + 1) : '';
-  let fullPath;
+  let fullPathAttempt;
 
   if (assetPath.startsWith('/')) {
-    fullPath = assetPath.substring(1);
+    // Absolute path from ZIP root
+    fullPathAttempt = assetPath.substring(1);
   } else {
+    // Relative path
     const pathParts = (baseDir + assetPath).split('/');
     const resolvedParts: string[] = [];
     for (const part of pathParts) {
       if (part === '.' || part === '') continue;
       if (part === '..') {
-        if (resolvedParts.length > 0) resolvedParts.pop();
+        if (resolvedParts.length > 0) {
+          resolvedParts.pop();
+        } else {
+          // Tried to go above root, path is likely invalid relative to zip structure
+          // console.warn(`[resolveAssetPathInZip] Path traversal above root for: base='${baseFilePath}', asset='${assetPath}'`);
+          return null;
+        }
       } else {
         resolvedParts.push(part);
       }
     }
-    fullPath = resolvedParts.join('/');
+    fullPathAttempt = resolvedParts.join('/');
   }
   
-  if (zip.file(fullPath)) return fullPath;
+  if (zip.file(fullPathAttempt)) return fullPathAttempt;
 
-  // Try common variations - less critical for CSS urls but good for general assets
-  const commonExtensionsToTry = ['', '.html', '.htm', '.css', '.js', '.png', '.jpg', '.jpeg', '.gif', '.svg'];
-  for (const ext of commonExtensionsToTry) {
-     if (zip.file(fullPath + ext)) return fullPath + ext;
-  }
-  
-  if (assetPath.startsWith('/') && zip.file(assetPath.substring(1))) return assetPath.substring(1);
+  // Fallback: try assetPath directly as if it's root-relative (common mistake in creatives)
   if (zip.file(assetPath)) return assetPath;
-
-
-  // console.warn(`[resolveAssetPathInZip] Could not resolve: base='${baseFilePath}', asset='${assetPath}', triedFull='${fullPath}', originalAssetPath='${assetPath}'`);
+  
+  // console.warn(`[resolveAssetPathInZip] Could not resolve: base='${baseFilePath}', asset='${assetPath}', triedFull='${fullPathAttempt}'`);
   return null;
 };
 
 // Helper function to inline URLs within CSS content
 const inlineCssUrls = async (cssContent: string, cssFilePath: string, zip: JSZip): Promise<string> => {
-  const urlRegex = /url\(\s*(?:['"]?)([^'"\)\?#]+)(?:['"]?)[\?#]?[^)]*\s*\)/g; // Improved regex to handle query/hash and capture path cleanly
+  const urlRegex = /url\(\s*(?:['"]?)([^'"\)\?#]+)(?:['"]?)[\?#]?[^)]*\s*\)/g;
   let updatedCssContent = cssContent;
   
-  // Store matches to process them without modifying the string during iteration
   const matches = [];
   let match;
   while ((match = urlRegex.exec(cssContent)) !== null) {
     matches.push({
-      originalUrlPattern: match[0], // e.g., url("path/to/image.png")
-      assetPath: match[1],          // e.g., path/to/image.png
+      originalUrlPattern: match[0], 
+      assetPath: match[1],
       index: match.index,
       length: match[0].length,
     });
   }
 
-  // Process matches in reverse order to avoid index issues during replacement
   for (let i = matches.length - 1; i >= 0; i--) {
     const currentMatch = matches[i];
     let assetPath = currentMatch.assetPath.trim();
 
     if (assetPath.startsWith('data:') || assetPath.startsWith('http:') || assetPath.startsWith('https:')) {
-      continue; // Skip data URIs and absolute URLs
+      continue; 
     }
 
     const resolvedAssetZipPath = resolveAssetPathInZip(cssFilePath, assetPath, zip);
@@ -132,13 +129,13 @@ const inlineCssUrls = async (cssContent: string, cssFilePath: string, zip: JSZip
             `url(${dataUri})` + 
             updatedCssContent.substring(currentMatch.index + currentMatch.length);
         } catch (e) {
-          console.warn(`Failed to inline asset ${assetPath} from CSS ${cssFilePath}:`, e);
+          // console.warn(`Failed to inline asset ${assetPath} from CSS ${cssFilePath}:`, e);
         }
       } else {
-         console.warn(`[inlineCssUrls] Asset file object not found in zip for CSS asset: ${resolvedAssetZipPath} (referenced by ${cssFilePath} for path ${assetPath})`);
+        //  console.warn(`[inlineCssUrls] Asset file object not found in zip for CSS asset: ${resolvedAssetZipPath} (referenced by ${cssFilePath} for path ${assetPath})`);
       }
     } else {
-      console.warn(`[inlineCssUrls] Could not resolve asset path in zip for CSS asset: ${assetPath} (referenced by ${cssFilePath})`);
+      // console.warn(`[inlineCssUrls] Could not resolve asset path in zip for CSS asset: ${assetPath} (referenced by ${cssFilePath})`);
     }
   }
   return updatedCssContent;
@@ -166,8 +163,9 @@ const extractAndProcessHtmlFromZip = async (file: File): Promise<string | undefi
     if (htmlFileEntry) {
       const htmlContent = await htmlFileEntry.async("string");
       const doc = new DOMParser().parseFromString(htmlContent, "text/html");
+      const alreadyInlinedCssPaths = new Set<string>();
 
-      // Inline CSS and process their internal url() references
+      // Inline CSS (<link rel="stylesheet">) and process their internal url() references
       const linkNodes = Array.from(doc.querySelectorAll('link[rel="stylesheet"][href]'));
       await Promise.all(linkNodes.map(async (linkNode) => {
         const href = linkNode.getAttribute('href');
@@ -182,19 +180,20 @@ const extractAndProcessHtmlFromZip = async (file: File): Promise<string | undefi
                 const styleNode = doc.createElement('style');
                 styleNode.textContent = processedCssContent;
                 linkNode.parentNode?.replaceChild(styleNode, linkNode);
+                alreadyInlinedCssPaths.add(assetZipPath);
               } catch (e) {
-                console.warn(`Failed to inline CSS ${href}:`, e);
+                // console.warn(`Failed to inline CSS ${href}:`, e);
               }
             }
           }
         }
       }));
 
-      // Inline JavaScript
+      // Inline JavaScript (<script src="...">)
       const scriptNodes = Array.from(doc.querySelectorAll('script[src]'));
       await Promise.all(scriptNodes.map(async (scriptNode) => {
         const src = scriptNode.getAttribute('src');
-        if (src) {
+        if (src && !(src.startsWith('http:') || src.startsWith('https:'))) { // Only process local scripts
           const assetZipPath = resolveAssetPathInZip(htmlFilePath, src, zip);
           if (assetZipPath) {
             const assetFile = zip.file(assetZipPath);
@@ -205,14 +204,14 @@ const extractAndProcessHtmlFromZip = async (file: File): Promise<string | undefi
                 newScriptNode.textContent = jsContent;
                 scriptNode.parentNode?.replaceChild(newScriptNode, scriptNode);
               } catch (e) {
-                console.warn(`Failed to inline JS ${src}:`, e);
+                // console.warn(`Failed to inline JS ${src}:`, e);
               }
             }
           }
         }
       }));
 
-      // Inline Images
+      // Inline Images (<img src="...">)
       const imgNodes = Array.from(doc.querySelectorAll('img[src]'));
       await Promise.all(imgNodes.map(async (imgNode) => {
         const src = imgNode.getAttribute('src');
@@ -226,7 +225,7 @@ const extractAndProcessHtmlFromZip = async (file: File): Promise<string | undefi
                 const mimeType = getMimeTypeFromPath(assetZipPath);
                 imgNode.setAttribute('src', `data:${mimeType};base64,${base64Content}`);
               } catch (e) {
-                console.warn(`Failed to inline image ${src}:`, e);
+                // console.warn(`Failed to inline image ${src}:`, e);
               }
             }
           }
@@ -247,18 +246,39 @@ const extractAndProcessHtmlFromZip = async (file: File): Promise<string | undefi
                 const mimeType = getMimeTypeFromPath(assetZipPath);
                 sourceNode.setAttribute('src', `data:${mimeType};base64,${base64Content}`);
               } catch (e) {
-                console.warn(`Failed to inline source ${src}:`, e);
+                // console.warn(`Failed to inline source ${src}:`, e);
               }
             }
           }
         }
       }));
 
+      // Proactive inlining of common local CSS files potentially loaded by scripts
+      const commonCssFilePaths = ['style.css', 'css/style.css', 'main.css', 'css/main.css'];
+      for (const commonPath of commonCssFilePaths) {
+        if (!alreadyInlinedCssPaths.has(commonPath)) {
+          const cssFileEntry = zip.file(commonPath);
+          if (cssFileEntry) {
+            try {
+              // console.log(`[extractAndProcessHtmlFromZip] Proactively inlining CSS: ${commonPath}`);
+              const rawCssContent = await cssFileEntry.async('string');
+              const processedCssContent = await inlineCssUrls(rawCssContent, commonPath, zip);
+              const styleNode = doc.createElement('style');
+              styleNode.textContent = processedCssContent;
+              doc.head.appendChild(styleNode);
+              alreadyInlinedCssPaths.add(commonPath); // Mark as inlined
+            } catch (e) {
+              // console.warn(`Failed to proactively inline CSS ${commonPath}:`, e);
+            }
+          }
+        }
+      }
+
       return doc.documentElement.outerHTML;
     }
     return undefined;
   } catch (error) {
-    console.error("Error processing ZIP file or inlining assets:", file.name, error);
+    // console.error("Error processing ZIP file or inlining assets:", file.name, error);
     return undefined;
   }
 };
@@ -284,25 +304,25 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
     fileIntrinsicHeight = parseInt(filenameDimMatch[2], 10);
     // If filename has dimensions, assume meta tag is correct and reflects these
     simulatedMetaTagContentString = `width=${fileIntrinsicWidth},height=${fileIntrinsicHeight}`;
-    actualMetaWidth = fileIntrinsicWidth;
+    actualMetaWidth = fileIntrinsicWidth; // Directly use filename dimensions for "actual" if meta is "correct"
     actualMetaHeight = fileIntrinsicHeight;
   } else {
-    // Filename does not have dimensions, simulate meta tag status
+    // Filename does not have dimensions, simulate meta tag status randomly
     const metaTagScenario = Math.random();
-    if (metaTagScenario < 0.05) { 
+    if (metaTagScenario < 0.05) { // 5% chance missing
       simulatedMetaTagContentString = null; 
       issues.push(createMockIssue('error', 'Required ad.size meta tag not found in HTML.', 'Ensure <meta name="ad.size" content="width=XXX,height=XXX"> is present.'));
-    } else if (metaTagScenario < 0.15) { 
+    } else if (metaTagScenario < 0.15) { // 10% chance malformed
       const malformType = Math.random();
       if (malformType < 0.25) simulatedMetaTagContentString = "width=300,height=BAD";
       else if (malformType < 0.50) simulatedMetaTagContentString = "width=300";
       else if (malformType < 0.75) simulatedMetaTagContentString = "height=250";
       else simulatedMetaTagContentString = "size=300x250";
       issues.push(createMockIssue('error', 'Invalid ad.size meta tag format.', `Meta tag content found: "${simulatedMetaTagContentString}". Expected format: "width=XXX,height=XXX".`));
-    } else { 
+    } else { // 85% chance present and "valid" (randomly chosen dimensions)
       const chosenFallbackDim = POSSIBLE_ACTUAL_DIMENSIONS_FROM_META_FALLBACK[Math.floor(Math.random() * POSSIBLE_ACTUAL_DIMENSIONS_FROM_META_FALLBACK.length)];
       simulatedMetaTagContentString = `width=${chosenFallbackDim.width},height=${chosenFallbackDim.height}`;
-      // Attempt to parse this simulated string
+      // Attempt to parse this simulated string for actualMetaWidth/Height
       const match = simulatedMetaTagContentString.match(/width=(\d+)[,;]?\s*height=(\d+)/i);
       if (match && match[1] && match[2]) {
         const wVal = parseInt(match[1], 10);
@@ -314,7 +334,6 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
           issues.push(createMockIssue('error', 'Invalid numeric values in ad.size meta tag.', `Parsed non-numeric values from: "${simulatedMetaTagContentString}"`));
         }
       } else {
-         // This case should ideally not be hit if the chosenFallbackDim always produces valid strings, but as a safeguard:
          issues.push(createMockIssue('error', 'Malformed ad.size meta tag content (fallback parsing).', `Content: "${simulatedMetaTagContentString}". Expected "width=XXX,height=YYY".`));
       }
     }
@@ -322,6 +341,7 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
   
   let expectedDim: { width: number; height: number };
   if (actualMetaWidth !== undefined && actualMetaHeight !== undefined) {
+    // If meta tag was valid and provided dimensions, these are the expected dimensions.
     expectedDim = { width: actualMetaWidth, height: actualMetaHeight };
   } else {
     // Fallback if meta tag was missing/invalid
@@ -330,7 +350,7 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
     } else if (MOCK_EXPECTED_DIMENSIONS_FALLBACK.length > 0) {
         expectedDim = MOCK_EXPECTED_DIMENSIONS_FALLBACK[Math.floor(Math.random() * MOCK_EXPECTED_DIMENSIONS_FALLBACK.length)]; // Use a random default from the list
     } else {
-        expectedDim = { width: 300, height: 250 }; // Absolute fallback
+        expectedDim = { width: 300, height: 250 }; // Absolute fallback if everything else fails
     }
   }
   
@@ -339,7 +359,7 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
     height: expectedDim.height, 
     actual: (actualMetaWidth !== undefined && actualMetaHeight !== undefined)
             ? { width: actualMetaWidth, height: actualMetaHeight }
-            : undefined,
+            : undefined, // actual will be undefined if meta tag was missing or malformed
   };
 
   // File Size Check
@@ -362,8 +382,7 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
     issues.push(createMockIssue('error', 'Missing or invalid clickTag implementation.'));
   }
   
-  // For mock purposes, assume file structure is always OK.
-  const fileStructureOk = true; 
+  const fileStructureOk = true; // Assume structure is OK for mock.
 
   if (Math.random() < 0.10 && issues.length === 0 && !isTooLarge) {
      issues.push(createMockIssue('warning', 'Creative uses deprecated JavaScript features.', 'Consider updating to modern ES6+ syntax for better performance and compatibility.'));
@@ -414,6 +433,7 @@ export default function HomePage() {
 
     setIsLoading(true);
     const initialResultsPromises = selectedFiles.map(async (file) => {
+      // For initial display, try to get dimensions from filename, then fallback
       let initialWidth = 0;
       let initialHeight = 0;
       const filenameDimMatch = file.name.match(/_(\d+)x(\d+)(?:[^/]*)\.zip$/i);
@@ -421,7 +441,6 @@ export default function HomePage() {
         initialWidth = parseInt(filenameDimMatch[1], 10);
         initialHeight = parseInt(filenameDimMatch[2], 10);
       } else if (MOCK_EXPECTED_DIMENSIONS_FALLBACK.length > 0) {
-        // Use a random fallback if filename has no dimensions
         const tempDim = MOCK_EXPECTED_DIMENSIONS_FALLBACK[Math.floor(Math.random() * MOCK_EXPECTED_DIMENSIONS_FALLBACK.length)];
         initialWidth = tempDim.width;
         initialHeight = tempDim.height;
@@ -434,13 +453,13 @@ export default function HomePage() {
         issues: [],
         fileSize: file.size,
         maxFileSize: MOCK_MAX_FILE_SIZE,
-        fileStructureOk: true, 
+        fileStructureOk: true, // Assume OK initially
         adDimensions: { 
           width: initialWidth, 
           height: initialHeight,
-          actual: undefined // Actual will be determined by mockValidateFile or meta tag
+          actual: undefined 
         },
-        htmlContent: undefined, // Will be populated by extractAndProcessHtmlFromZip
+        htmlContent: undefined, 
       };
     });
 
@@ -452,16 +471,14 @@ export default function HomePage() {
       try {
         processedHtmlContent = await extractAndProcessHtmlFromZip(file);
       } catch (e) {
-        console.error(`Failed to extract and process HTML for ${file.name}`, e);
-        // Add an issue directly to the initial result for this file if HTML processing fails
+        // console.error(`Failed to extract and process HTML for ${file.name}`, e);
          const htmlProcessingErrorIssue = createMockIssue('error', `Failed to process HTML from ${file.name}.`, (e as Error).message);
          initialResults[index].issues.push(htmlProcessingErrorIssue);
-         initialResults[index].status = 'error'; // Mark as error
+         initialResults[index].status = 'error'; 
       }
 
       const mockResultPart = await mockValidateFile(file);
       
-      // Merge initial result (which might have HTML processing errors) with mock validation results
       const finalIssues = [...initialResults[index].issues, ...mockResultPart.issues];
       let finalStatus = mockResultPart.status;
       if (initialResults[index].status === 'error' || finalIssues.some(issue => issue.type === 'error')) {
@@ -472,11 +489,13 @@ export default function HomePage() {
 
 
       return {
-        ...initialResults[index], // This carries over id, fileName, fileSize, etc.
-        ...mockResultPart,        // This brings in other mock validation details
+        ...initialResults[index], 
+        ...mockResultPart,        
         htmlContent: processedHtmlContent, 
-        issues: finalIssues,      // Use combined issues
-        status: finalStatus,      // Use combined status
+        issues: finalIssues,      
+        status: finalStatus,
+        // Ensure adDimensions from mockValidateFile (which now considers meta tags more directly) are used
+        adDimensions: mockResultPart.adDimensions 
       };
     });
     
@@ -487,7 +506,7 @@ export default function HomePage() {
           prevResults.map(pr => pr.id === result.id ? result : pr)
         );
       } catch (error) {
-        console.error("Validation error for file:", selectedFiles[i].name, error);
+        // console.error("Validation error for file:", selectedFiles[i].name, error);
         
         let errorInitialWidth = 0;
         let errorInitialHeight = 0;
@@ -507,7 +526,7 @@ export default function HomePage() {
           status: 'error',
           issues: [createMockIssue('error', 'An unexpected error occurred during validation.', (error as Error).message)],
           fileSize: selectedFiles[i].size,
-          fileStructureOk: false, // Assume structure is bad on unexpected error
+          fileStructureOk: false, 
            adDimensions: {
             width: errorInitialWidth,
             height: errorInitialHeight,
@@ -555,6 +574,4 @@ export default function HomePage() {
     </div>
   );
 }
-    
 
-    
