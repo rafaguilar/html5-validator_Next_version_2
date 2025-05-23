@@ -22,4 +22,5 @@ export interface ValidationResult {
   detectedClickTags?: ClickTagInfo[];
   fileSize?: number; // in bytes
   maxFileSize?: number; // in bytes
+  htmlContent?: string; // To store the HTML content for preview
 }

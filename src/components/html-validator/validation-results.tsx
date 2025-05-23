@@ -3,7 +3,7 @@
 
 import type { ReactNode } from 'react';
 import React, { useRef, useState } from 'react';
-import Image from 'next/image';
+// import Image from 'next/image'; // Keep for fallback, but iframe is primary
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import type { ValidationResult, ValidationIssue, ClickTagInfo } from '@/types';
@@ -61,10 +61,32 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
     const input = reportRef.current;
     if (input && results.length > 0) {
       setIsGeneratingPdf(true);
+      // Temporarily make iframes visible for capture if they were hidden
+      const iframes = input.querySelectorAll('iframe');
+      iframes.forEach(iframe => iframe.style.visibility = 'visible');
+
       html2canvas(input, { 
         scale: 2, 
         useCORS: true, 
-        logging: false 
+        logging: false,
+        allowTaint: true, // Important for iframes
+        onclone: (documentClone) => {
+          // Attempt to deal with iframe content in cloned document for html2canvas
+          // This can be tricky and might not always work perfectly for complex srcDoc content
+          Array.from(documentClone.querySelectorAll('iframe')).forEach((iframe, index) => {
+            const originalIframe = input.querySelectorAll('iframe')[index];
+            if (originalIframe && originalIframe.contentWindow && originalIframe.contentWindow.document.body) {
+              try {
+                // @ts-ignore: srcdoc exists on iframe
+                iframe.srcdoc = originalIframe.srcdoc; 
+                // It's very hard to get html2canvas to render srcdoc iframe content correctly.
+                // A more robust solution for PDF might involve server-side rendering or a different PDF library.
+              } catch (e) {
+                console.warn("Could not clone iframe content for PDF", e);
+              }
+            }
+          });
+        }
       })
         .then((canvas) => {
           const imgData = canvas.toDataURL('image/png');
@@ -76,32 +98,45 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
 
           const imgProps = pdf.getImageProperties(imgData);
           const pdfWidth = pdf.internal.pageSize.getWidth();
-          const pdfHeight = pdf.internal.pageSize.getHeight();
+          // const pdfHeight = pdf.internal.pageSize.getHeight(); // Not used for scaling logic here
           
           const canvasWidth = imgProps.width;
           const canvasHeight = imgProps.height;
 
-          const ratio = Math.min(pdfWidth / canvasWidth, pdfHeight / canvasHeight);
-          
+          // Scale image to fit PDF width, maintaining aspect ratio
+          const ratio = pdfWidth / canvasWidth;
           const scaledWidth = canvasWidth * ratio;
           const scaledHeight = canvasHeight * ratio;
-
-          const x = (pdfWidth - scaledWidth) / 2; 
-          let y = 20; // Add top margin
-
-          const pageHeightWithMargin = pdf.internal.pageSize.getHeight() - 40; // Top and bottom margin
+          
+          let y = 20; 
+          const pageHeightWithMargin = pdf.internal.pageSize.getHeight() - 40; 
           let heightLeft = scaledHeight;
-          let currentPosition = 0;
-
-          // Add first page
-          pdf.addImage(imgData, 'PNG', x, y - currentPosition, scaledWidth, scaledHeight);
-          heightLeft -= pageHeightWithMargin;
+          let currentPositionOnImage = 0;
 
           while (heightLeft > 0) {
-            currentPosition += pageHeightWithMargin;
-            pdf.addPage();
-            pdf.addImage(imgData, 'PNG', x, y - currentPosition, scaledWidth, scaledHeight);
-            heightLeft -= pageHeightWithMargin;
+            const pageSliceHeight = Math.min(pageHeightWithMargin, heightLeft);
+            const imageSliceHeightInOriginalPixels = pageSliceHeight / ratio;
+
+            pdf.addImage(
+              imgData, 
+              'PNG', 
+              0, // x
+              y, // y
+              scaledWidth, 
+              scaledHeight,
+              undefined, // alias
+              'FAST', // compression
+              0, // rotation
+              0, // xInImage
+              currentPositionOnImage / ratio // yInImage
+            );
+            
+            heightLeft -= pageSliceHeight;
+            currentPositionOnImage += imageSliceHeightInOriginalPixels;
+
+            if (heightLeft > 0) {
+              pdf.addPage();
+            }
           }
           
           pdf.save('validation-report.pdf');
@@ -111,6 +146,7 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
         })
         .finally(() => {
           setIsGeneratingPdf(false);
+           iframes.forEach(iframe => iframe.style.visibility = ''); // Restore original visibility
         });
     }
   };
@@ -157,13 +193,13 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
           </Button>
         )}
       </div>
-      <div ref={reportRef}> {/* This div will be captured by html2canvas */}
+      <div ref={reportRef}>
         {results.map(result => {
-          const previewWidth = result.adDimensions?.actual?.width || result.adDimensions?.width;
-          const previewHeight = result.adDimensions?.actual?.height || result.adDimensions?.height;
+          const previewWidth = result.adDimensions?.actual?.width || result.adDimensions?.width || 0;
+          const previewHeight = result.adDimensions?.actual?.height || result.adDimensions?.height || 0;
 
           return (
-            <Card key={result.id} className="shadow-lg overflow-hidden mb-6"> {/* Added mb-6 for spacing in PDF */}
+            <Card key={result.id} className="shadow-lg overflow-hidden mb-6">
               <CardHeader className={`flex flex-row items-center justify-between space-y-0 pb-2 ${
                 result.status === 'success' ? 'bg-green-500/10' :
                 result.status === 'error' ? 'bg-destructive/10' :
@@ -234,21 +270,35 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
                   )}
                 </div>
 
-                {previewWidth && previewHeight && previewWidth > 0 && previewHeight > 0 && (
+                {previewWidth > 0 && previewHeight > 0 && (
                   <div className="pt-4">
                     <h4 className="text-md font-medium text-foreground mb-2 flex items-center">
                       <Eye className="w-4 h-4 mr-2 text-primary" /> Banner Preview:
                     </h4>
-                    <div className="bg-secondary/30 p-3 rounded-md flex justify-center items-center">
-                      <Image
-                        src={`https://placehold.co/${previewWidth}x${previewHeight}.png`}
-                        alt={`Banner Preview ${previewWidth}x${previewHeight}`}
-                        width={previewWidth}
-                        height={previewHeight}
-                        className="max-w-full h-auto border rounded shadow-md bg-background"
-                        data-ai-hint="advertisement banner"
-                        priority={results.indexOf(result) < 2} // Prioritize loading for first few images
-                      />
+                    <div className="bg-secondary/30 p-3 rounded-md flex justify-center items-center overflow-hidden" style={{ width: '100%', maxWidth: `${previewWidth}px`, margin: '0 auto' }}>
+                      {result.htmlContent ? (
+                        <iframe
+                          title={`Banner Preview: ${result.fileName}`}
+                          srcDoc={result.htmlContent}
+                          width={previewWidth}
+                          height={previewHeight}
+                          sandbox="allow-scripts" // Allows scripts; consider implications if this were not mock data
+                          className="border rounded shadow-md bg-background"
+                          style={{border: '1px solid #ccc', display: 'block', transformOrigin: 'top left' }}
+                          // The iframe will scale if its container is smaller than its width/height.
+                          // For very large banners, you might need additional scaling CSS on the iframe itself or its wrapper.
+                        />
+                      ) : (
+                        // Fallback to placeholder if htmlContent is not available
+                        <img // Using img tag directly for placeholder
+                          src={`https://placehold.co/${previewWidth}x${previewHeight}.png`}
+                          alt={`Banner Preview ${previewWidth}x${previewHeight}`}
+                          width={previewWidth}
+                          height={previewHeight}
+                          className="max-w-full h-auto border rounded shadow-md bg-background"
+                          data-ai-hint="advertisement banner"
+                        />
+                      )}
                     </div>
                   </div>
                 )}
@@ -321,4 +371,3 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
     </div>
   );
 }
-

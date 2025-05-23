@@ -2,19 +2,18 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
+import JSZip from 'jszip';
 import { AppHeader } from '@/components/layout/header';
 import { FileUploader } from '@/components/html-validator/file-uploader';
 import { ValidationResults } from '@/components/html-validator/validation-results';
 import type { ValidationResult, ValidationIssue, ClickTagInfo } from '@/types';
 import { useToast } from "@/hooks/use-toast";
 
-// Mock data and functions
 const MOCK_MAX_FILE_SIZE = 2.2 * 1024 * 1024; // 2.2MB
-// Represents a list of possible campaign-defined ad slot sizes (fallback if meta tag is unusable)
-const MOCK_EXPECTED_DIMENSIONS = [{width: 300, height: 250}, {width: 728, height: 90}, {width: 160, height: 600}];
+const MOCK_EXPECTED_DIMENSIONS_FALLBACK = [{width: 300, height: 250}, {width: 728, height: 90}, {width: 160, height: 600}]; // Fallback if no dimensions from filename or meta
 
-// Simulate a wider range of possible actual dimensions that could be in a meta tag (fallback if filename doesn't specify)
-const POSSIBLE_ACTUAL_DIMENSIONS_FROM_META = [
+// Simulate a wider range of possible actual dimensions that could be in a meta tag if filename doesn't specify
+const POSSIBLE_ACTUAL_DIMENSIONS_FROM_META_FALLBACK = [
   { width: 300, height: 250 }, { width: 728, height: 90 },
   { width: 160, height: 600 }, { width: 300, height: 600 },
   { width: 468, height: 60 },  { width: 120, height: 600 },
@@ -30,18 +29,17 @@ const createMockIssue = (type: 'error' | 'warning', message: string, details?: s
   details,
 });
 
-const mockValidateFile = async (file: File): Promise<ValidationResult> => {
-  await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 1000)); // Simulate network delay
+const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id' | 'fileName' | 'fileSize' | 'htmlContent'>> => {
+  await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 500)); // Simulate network delay
 
   const issues: ValidationIssue[] = [];
-  let status: ValidationResult['status'] = 'success'; // Assume success initially
+  let status: ValidationResult['status'] = 'success';
   const detectedClickTags: ClickTagInfo[] = [];
   
   let actualMetaWidth: number | undefined = undefined;
   let actualMetaHeight: number | undefined = undefined;
   let simulatedMetaTagContentString: string | null = null;
 
-  // Attempt to parse dimensions from filename (e.g., "..._160x600.zip")
   let fileIntrinsicWidth: number | undefined;
   let fileIntrinsicHeight: number | undefined;
   const filenameDimMatch = file.name.match(/_(\d+)x(\d+)(?:[^/]*)\.zip$/i);
@@ -56,18 +54,18 @@ const mockValidateFile = async (file: File): Promise<ValidationResult> => {
   } else {
     // Filename does NOT provide dimensions. Simulate random meta tag scenarios.
     const metaTagScenario = Math.random();
-    if (metaTagScenario < 0.05) { // 5% chance meta tag is completely missing
+    if (metaTagScenario < 0.05) { 
       simulatedMetaTagContentString = null; 
       issues.push(createMockIssue('error', 'Required ad.size meta tag not found in HTML.', 'Ensure <meta name="ad.size" content="width=XXX,height=XXX"> is present.'));
-    } else if (metaTagScenario < 0.15) { // 10% chance meta tag is present but malformed
+    } else if (metaTagScenario < 0.15) { 
       const malformType = Math.random();
       if (malformType < 0.25) simulatedMetaTagContentString = "width=300,height=BAD";
       else if (malformType < 0.50) simulatedMetaTagContentString = "width=300";
       else if (malformType < 0.75) simulatedMetaTagContentString = "height=250";
       else simulatedMetaTagContentString = "size=300x250";
       issues.push(createMockIssue('error', 'Invalid ad.size meta tag format.', `Meta tag content found: "${simulatedMetaTagContentString}". Expected format: "width=XXX,height=XXX".`));
-    } else { // 85% chance meta tag is present and notionally parsable
-      const chosenFallbackDim = POSSIBLE_ACTUAL_DIMENSIONS_FROM_META[Math.floor(Math.random() * POSSIBLE_ACTUAL_DIMENSIONS_FROM_META.length)];
+    } else { 
+      const chosenFallbackDim = POSSIBLE_ACTUAL_DIMENSIONS_FROM_META_FALLBACK[Math.floor(Math.random() * POSSIBLE_ACTUAL_DIMENSIONS_FROM_META_FALLBACK.length)];
       simulatedMetaTagContentString = `width=${chosenFallbackDim.width},height=${chosenFallbackDim.height}`;
       
       const match = simulatedMetaTagContentString.match(/width=(\d+)[,;]?\s*height=(\d+)/i);
@@ -92,13 +90,14 @@ const mockValidateFile = async (file: File): Promise<ValidationResult> => {
   } else {
     if (fileIntrinsicWidth !== undefined && fileIntrinsicHeight !== undefined) {
         expectedDim = { width: fileIntrinsicWidth, height: fileIntrinsicHeight };
-    } else if (MOCK_EXPECTED_DIMENSIONS.length > 0) {
-        expectedDim = MOCK_EXPECTED_DIMENSIONS[Math.floor(Math.random() * MOCK_EXPECTED_DIMENSIONS.length)];
+    } else if (MOCK_EXPECTED_DIMENSIONS_FALLBACK.length > 0) {
+        // Fallback to the first item in MOCK_EXPECTED_DIMENSIONS_FALLBACK or a default
+        expectedDim = MOCK_EXPECTED_DIMENSIONS_FALLBACK[0];
     } else {
-        expectedDim = { width: 0, height: 0 }; 
+        expectedDim = { width: 300, height: 250 }; // Absolute fallback
     }
   }
-
+  
   const adDimensions: ValidationResult['adDimensions'] = {
     width: expectedDim.width, 
     height: expectedDim.height, 
@@ -113,9 +112,9 @@ const mockValidateFile = async (file: File): Promise<ValidationResult> => {
     issues.push(createMockIssue('error', `File size exceeds limit (${(MOCK_MAX_FILE_SIZE / (1024*1024)).toFixed(1)}MB).`));
   }
 
-  // ClickTag Simulation
+  // ClickTag Simulation (90% chance to find specific clickTags)
   const clickTagScenario = Math.random();
-  if (clickTagScenario > 0.1) { // 90% chance to find clickTags
+  if (clickTagScenario > 0.1) {
     const ct1 = { name: 'clickTag', url: "https://www.symbravohcp.com", isHttps: true };
     const ct2 = { name: 'clickTag2', url: "http://www.axsome.com/symbravo-prescribing-information.pdf", isHttps: false };
     detectedClickTags.push(ct1, ct2);
@@ -127,20 +126,13 @@ const mockValidateFile = async (file: File): Promise<ValidationResult> => {
     issues.push(createMockIssue('error', 'Missing or invalid clickTag implementation.'));
   }
   
-  // File Structure - now always valid for mock
-  const validFileStructure = true;
-  // No issue added for file structure as it's always true now.
-  // If it were to be false:
-  // if (!validFileStructure) {
-  //   issues.push(createMockIssue('error', 'Invalid file structure. Primary HTML file not found at root.'));
-  // }
-  
+  const fileStructureOk = true; // Assume valid for mock
+
   // Random warning if no other issues (and not too large, as that might be a warning itself)
   if (Math.random() < 0.10 && issues.length === 0 && !isTooLarge) {
      issues.push(createMockIssue('warning', 'Creative uses deprecated JavaScript features.', 'Consider updating to modern ES6+ syntax for better performance and compatibility.'));
   }
 
-  // --- Determine final status based on issues ---
   const hasErrors = issues.some(issue => issue.type === 'error');
   const hasWarnings = issues.some(issue => issue.type === 'warning');
 
@@ -152,22 +144,17 @@ const mockValidateFile = async (file: File): Promise<ValidationResult> => {
     status = 'success';
   }
   
-  // Add file size warning if large but not over limit, and no errors exist
   if (!isTooLarge && file.size > MOCK_MAX_FILE_SIZE * 0.75 && !hasErrors) {
     issues.push(createMockIssue('warning', 'File size is large, consider optimizing assets for faster loading.', `Current size: ${(file.size / (1024*1024)).toFixed(2)}MB.`));
-    if (status !== 'error') status = 'warning'; // Ensure status becomes warning if not already error
+    if (status !== 'error') status = 'warning';
   }
 
-
   return {
-    id: `${file.name}-${Date.now()}`,
-    fileName: file.name,
     status,
     issues,
     adDimensions, 
-    fileStructureOk: validFileStructure,
+    fileStructureOk,
     detectedClickTags: detectedClickTags.length > 0 ? detectedClickTags : undefined,
-    fileSize: file.size,
     maxFileSize: MOCK_MAX_FILE_SIZE,
   };
 };
@@ -178,6 +165,29 @@ export default function HomePage() {
   const [validationResults, setValidationResults] = useState<ValidationResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const { toast } = useToast();
+
+  const extractHtmlFromZip = async (file: File): Promise<string | undefined> => {
+    try {
+      const zip = await JSZip.loadAsync(file);
+      let htmlFile = zip.file("index.html");
+      if (!htmlFile) {
+        const htmlFiles = zip.file(/\.html?$/i);
+        if (htmlFiles.length > 0) {
+          // Prefer HTML files at the root
+          const rootHtmlFiles = htmlFiles.filter(f => !f.name.includes('/'));
+          htmlFile = rootHtmlFiles.length > 0 ? rootHtmlFiles[0] : htmlFiles[0];
+        }
+      }
+      if (htmlFile) {
+        return await htmlFile.async("string");
+      }
+      return undefined;
+    } catch (error) {
+      console.error("Error unzipping file or reading HTML:", file.name, error);
+      return undefined;
+    }
+  };
+
 
   const handleValidateFiles = async () => {
     if (selectedFiles.length === 0) {
@@ -190,15 +200,15 @@ export default function HomePage() {
     }
 
     setIsLoading(true);
-    const initialResults = selectedFiles.map(file => {
+    const initialResultsPromises = selectedFiles.map(async (file) => {
       let initialWidth = 0;
       let initialHeight = 0;
       const filenameDimMatch = file.name.match(/_(\d+)x(\d+)(?:[^/]*)\.zip$/i);
       if (filenameDimMatch && filenameDimMatch[1] && filenameDimMatch[2]) {
         initialWidth = parseInt(filenameDimMatch[1], 10);
         initialHeight = parseInt(filenameDimMatch[2], 10);
-      } else if (MOCK_EXPECTED_DIMENSIONS.length > 0) {
-        const tempDim = MOCK_EXPECTED_DIMENSIONS[0];
+      } else if (MOCK_EXPECTED_DIMENSIONS_FALLBACK.length > 0) {
+        const tempDim = MOCK_EXPECTED_DIMENSIONS_FALLBACK[0];
         initialWidth = tempDim.width;
         initialHeight = tempDim.height;
       }
@@ -210,23 +220,46 @@ export default function HomePage() {
         issues: [],
         fileSize: file.size,
         maxFileSize: MOCK_MAX_FILE_SIZE,
-        fileStructureOk: true, // Assume ok initially for pending state
+        fileStructureOk: true, 
         adDimensions: { 
           width: initialWidth, 
           height: initialHeight,
           actual: undefined
-        }
+        },
+        htmlContent: undefined, // Will be populated later
       };
     });
-    setValidationResults(initialResults);
 
-    const resultsPromises = selectedFiles.map(file => mockValidateFile(file));
+    const initialResults = await Promise.all(initialResultsPromises);
+    setValidationResults(initialResults);
+    
+    const resultsPromises = selectedFiles.map(async (file, index) => {
+      let htmlContent: string | undefined;
+      try {
+        htmlContent = await extractHtmlFromZip(file);
+      } catch (e) {
+        console.error(`Failed to extract HTML for ${file.name}`, e);
+        // Potentially add an issue here if HTML extraction is critical
+      }
+
+      const mockResultPart = await mockValidateFile(file);
+      
+      return {
+        ...initialResults[index], // Preserve ID and initial file info
+        ...mockResultPart, // Get status, issues, etc. from mock
+        htmlContent, // Add the extracted HTML content
+        // Ensure id, fileName, fileSize are correctly from initialResults if not in mockResultPart
+        id: initialResults[index].id,
+        fileName: file.name,
+        fileSize: file.size,
+      };
+    });
     
     for (let i = 0; i < resultsPromises.length; i++) {
       try {
         const result = await resultsPromises[i];
         setValidationResults(prevResults => 
-          prevResults.map(pr => pr.fileName === result.fileName && pr.status === 'validating' ? result : pr)
+          prevResults.map(pr => pr.id === result.id ? result : pr)
         );
       } catch (error) {
         console.error("Validation error for file:", selectedFiles[i].name, error);
@@ -237,8 +270,8 @@ export default function HomePage() {
         if (errorFilenameDimMatch && errorFilenameDimMatch[1] && errorFilenameDimMatch[2]) {
             errorInitialWidth = parseInt(errorFilenameDimMatch[1], 10);
             errorInitialHeight = parseInt(errorFilenameDimMatch[2], 10);
-        } else if (MOCK_EXPECTED_DIMENSIONS.length > 0) {
-            const tempDim = MOCK_EXPECTED_DIMENSIONS[0];
+        } else if (MOCK_EXPECTED_DIMENSIONS_FALLBACK.length > 0) {
+            const tempDim = MOCK_EXPECTED_DIMENSIONS_FALLBACK[0];
             errorInitialWidth = tempDim.width;
             errorInitialHeight = tempDim.height;
         }
@@ -255,9 +288,10 @@ export default function HomePage() {
             height: errorInitialHeight,
             actual: undefined
           },
+          htmlContent: undefined,
         };
         setValidationResults(prevResults => 
-          prevResults.map(pr => pr.fileName === selectedFiles[i].name && pr.status === 'validating' ? errorResult : pr)
+          prevResults.map(pr => (pr.fileName === selectedFiles[i].name && (pr.status === 'validating' || pr.id.endsWith('-pending'))) ? errorResult : pr)
         );
       }
     }
