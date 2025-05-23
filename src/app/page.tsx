@@ -38,7 +38,7 @@ const mockValidateFile = async (file: File): Promise<ValidationResult> => {
   
   let actualMetaWidth: number | undefined = undefined;
   let actualMetaHeight: number | undefined = undefined;
-  let simulatedMetaTagContentString: string | null = null; 
+  let simulatedMetaTagContentString: string | null = null; // Used for error reporting if parsing fails
 
   // Attempt to parse dimensions from filename (e.g., "..._160x600.zip")
   let fileIntrinsicWidth: number | undefined;
@@ -49,47 +49,50 @@ const mockValidateFile = async (file: File): Promise<ValidationResult> => {
     fileIntrinsicHeight = parseInt(filenameDimMatch[2], 10);
   }
 
-  const metaTagScenario = Math.random();
+  if (fileIntrinsicWidth !== undefined && fileIntrinsicHeight !== undefined) {
+    // If filename provides dimensions, assume the ad.size meta tag is present and correctly reflects these dimensions.
+    // This ensures "Detected" dimensions will match the filename for these specific files.
+    actualMetaWidth = fileIntrinsicWidth;
+    actualMetaHeight = fileIntrinsicHeight;
+    // simulatedMetaTagContentString = `width=${fileIntrinsicWidth},height=${fileIntrinsicHeight}`; // For potential error reporting, though not used if this path is taken
+  } else {
+    // Filename does NOT provide dimensions. Simulate random meta tag scenarios.
+    const metaTagScenario = Math.random();
 
-  if (metaTagScenario < 0.05) { // 5% chance meta tag is completely missing
-    simulatedMetaTagContentString = null; 
-    issues.push(createMockIssue('error', 'Required ad.size meta tag not found in HTML.', 'Ensure <meta name="ad.size" content="width=XXX,height=XXX"> is present.'));
-  } else if (metaTagScenario < 0.15) { // 10% chance meta tag is present but malformed
-    const malformType = Math.random();
-    if (malformType < 0.25) simulatedMetaTagContentString = "width=300,height=BAD";
-    else if (malformType < 0.50) simulatedMetaTagContentString = "width=300";
-    else if (malformType < 0.75) simulatedMetaTagContentString = "height=250";
-    else simulatedMetaTagContentString = "size=300x250"; // A common malformation
-    
-    issues.push(createMockIssue('error', 'Invalid ad.size meta tag format.', `Meta tag content found: "${simulatedMetaTagContentString}". Expected format: "width=XXX,height=XXX".`));
-  } else { // 85% chance meta tag is present and notionally parsable
-    if (fileIntrinsicWidth !== undefined && fileIntrinsicHeight !== undefined) {
-      // If dimensions parsed from filename, use them for the simulated meta tag
-      simulatedMetaTagContentString = `width=${fileIntrinsicWidth},height=${fileIntrinsicHeight}`;
-    } else {
-      // Fallback if filename doesn't contain dimensions: pick from a predefined list
+    if (metaTagScenario < 0.05) { // 5% chance meta tag is completely missing
+      simulatedMetaTagContentString = null; 
+      issues.push(createMockIssue('error', 'Required ad.size meta tag not found in HTML.', 'Ensure <meta name="ad.size" content="width=XXX,height=XXX"> is present.'));
+      // actualMetaWidth/Height remain undefined
+    } else if (metaTagScenario < 0.15) { // 10% chance meta tag is present but malformed
+      const malformType = Math.random();
+      if (malformType < 0.25) simulatedMetaTagContentString = "width=300,height=BAD";
+      else if (malformType < 0.50) simulatedMetaTagContentString = "width=300";
+      else if (malformType < 0.75) simulatedMetaTagContentString = "height=250";
+      else simulatedMetaTagContentString = "size=300x250"; // A common malformation
+      
+      issues.push(createMockIssue('error', 'Invalid ad.size meta tag format.', `Meta tag content found: "${simulatedMetaTagContentString}". Expected format: "width=XXX,height=XXX".`));
+      // actualMetaWidth/Height remain undefined (as they can't be parsed from malformed string)
+    } else { // 85% chance meta tag is present and notionally parsable
+      // Pick random dimensions for the meta tag since filename didn't specify any
       const chosenFallbackDim = POSSIBLE_ACTUAL_DIMENSIONS_FROM_META[Math.floor(Math.random() * POSSIBLE_ACTUAL_DIMENSIONS_FROM_META.length)];
       simulatedMetaTagContentString = `width=${chosenFallbackDim.width},height=${chosenFallbackDim.height}`;
-    }
-    
-    // Now, try to parse the simulatedMetaTagContentString
-    const match = simulatedMetaTagContentString.match(/width=(\d+)[,;]?\s*height=(\d+)/i); // Flexible parsing
-    if (match && match[1] && match[2]) {
-      const wVal = parseInt(match[1], 10);
-      const hVal = parseInt(match[2], 10);
-      if (!isNaN(wVal) && !isNaN(hVal)) {
-        actualMetaWidth = wVal;
-        actualMetaHeight = hVal;
+      
+      // Now, try to parse this simulatedMetaTagContentString
+      const match = simulatedMetaTagContentString.match(/width=(\d+)[,;]?\s*height=(\d+)/i); // Flexible parsing
+      if (match && match[1] && match[2]) {
+        const wVal = parseInt(match[1], 10);
+        const hVal = parseInt(match[2], 10);
+        if (!isNaN(wVal) && !isNaN(hVal)) {
+          actualMetaWidth = wVal;
+          actualMetaHeight = hVal;
+        } else {
+          issues.push(createMockIssue('error', 'Invalid numeric values in ad.size meta tag.', `Parsed non-numeric values from: "${simulatedMetaTagContentString}"`));
+          // actualMetaWidth/Height remain undefined
+        }
       } else {
-        // This case means "width=BAD,height=123" or similar - values not numeric
-        issues.push(createMockIssue('error', 'Invalid numeric values in ad.size meta tag.', `Parsed non-numeric values from: "${simulatedMetaTagContentString}"`));
-        // actualMetaWidth/Height remain undefined
+         issues.push(createMockIssue('error', 'Malformed ad.size meta tag content.', `Content: "${simulatedMetaTagContentString}". Expected "width=XXX,height=YYY".`));
+         // actualMetaWidth/Height remain undefined
       }
-    } else {
-       // This case means the structure was wrong, e.g. "size=300x200" or only one part "width=300"
-       // This error might be redundant if already caught by the malformed scenario, but good for explicit "present but unparsable"
-       issues.push(createMockIssue('error', 'Malformed ad.size meta tag content.', `Content: "${simulatedMetaTagContentString}". Expected "width=XXX,height=YYY".`));
-       // actualMetaWidth/Height remain undefined
     }
   }
 
@@ -98,11 +101,11 @@ const mockValidateFile = async (file: File): Promise<ValidationResult> => {
   let expectedDim: { width: number; height: number };
 
   if (actualMetaWidth !== undefined && actualMetaHeight !== undefined) {
-    // If the ad.size meta tag provided valid dimensions, these are considered the "expected"
-    // dimensions for this specific creative.
+    // If the ad.size meta tag provided valid dimensions (either from filename or random simulation),
+    // these are considered the "expected" dimensions for this specific creative.
     expectedDim = { width: actualMetaWidth, height: actualMetaHeight };
   } else {
-    // If the ad.size meta tag was missing or malformed, actualMetaWidth/Height will be undefined.
+    // If actualMetaWidth/Height are undefined (e.g. meta tag missing/malformed in the "no filename dimensions" case)
     // Fallback: Try to use dimensions from filename if available.
     if (fileIntrinsicWidth !== undefined && fileIntrinsicHeight !== undefined) {
         expectedDim = { width: fileIntrinsicWidth, height: fileIntrinsicHeight };
@@ -113,7 +116,7 @@ const mockValidateFile = async (file: File): Promise<ValidationResult> => {
     } else {
         expectedDim = { width: 0, height: 0 }; // Absolute fallback
     }
-    // An error for the missing/malformed meta tag would have already been added to `issues`.
+    // An error for the missing/malformed meta tag (if applicable) would have already been added.
   }
 
   const adDimensions: ValidationResult['adDimensions'] = {
@@ -121,7 +124,7 @@ const mockValidateFile = async (file: File): Promise<ValidationResult> => {
     height: expectedDim.height, 
     actual: (actualMetaWidth !== undefined && actualMetaHeight !== undefined)
             ? { width: actualMetaWidth, height: actualMetaHeight }
-            : undefined, // "actual" is only populated if meta tag was successfully parsed
+            : undefined, // "actual" is only populated if meta tag was successfully parsed or derived from filename
   };
 
   // --- Existing mock checks (file size, clickTag, file structure) ---
