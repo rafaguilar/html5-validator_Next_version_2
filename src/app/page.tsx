@@ -119,11 +119,10 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
   if (clickTagScenario > 0.1) { // 90% chance clicktags are found
     const ct1: ClickTagInfo = { name: 'clickTag', url: "https://www.symbravohcp.com", isHttps: true };
     detectedClickTags.push(ct1);
-    // No warning for ct1 as it's always https here in this version of mock
 
     if (Math.random() > 0.3) { // 70% of those also have clickTag2
-        const ct2IsHttps = Math.random() > 0.2; // 80% chance clickTag2 is https
-        const ct2Url = ct2IsHttps ? "https://www.axsome.com/symbravo-prescribing-information.pdf" : "http://www.axsome.com/symbravo-prescribing-information.pdf";
+        const ct2IsHttps = false; // Always make clickTag2 HTTP for this scenario
+        const ct2Url = "http://www.axsome.com/symbravo-prescribing-information.pdf"; // Fixed HTTP URL
         const ct2: ClickTagInfo = { name: 'clickTag2', url: ct2Url, isHttps: ct2IsHttps };
         detectedClickTags.push(ct2);
         if (!ct2.isHttps) {
@@ -135,7 +134,7 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
   }
 
 
-  const fileStructureOk = true; // Always true for mock in v1.1.0
+  const fileStructureOk = true; 
 
   if (Math.random() < 0.10 && issues.length === 0 && !isTooLarge) {
      issues.push(createMockIssue('warning', 'Creative uses deprecated JavaScript features.', 'Consider updating to modern ES6+ syntax for better performance and compatibility.'));
@@ -192,10 +191,12 @@ export default function HomePage() {
         initialWidth = parseInt(filenameDimMatch[1], 10);
         initialHeight = parseInt(filenameDimMatch[2], 10);
       } else if (POSSIBLE_FALLBACK_DIMENSIONS.length > 0) {
+        // Fallback to a random dimension if not in filename, for initial display
         const tempDim = POSSIBLE_FALLBACK_DIMENSIONS[Math.floor(Math.random() * POSSIBLE_FALLBACK_DIMENSIONS.length)];
         initialWidth = tempDim.width;
         initialHeight = tempDim.height;
       }
+
 
       return {
         id: `${file.name}-${Date.now()}-pending-${Math.random()}`,
@@ -204,13 +205,12 @@ export default function HomePage() {
         issues: [],
         fileSize: file.size,
         maxFileSize: MOCK_MAX_FILE_SIZE,
-        fileStructureOk: true, // Assume true initially
+        fileStructureOk: true, 
         adDimensions: {
           width: initialWidth,
           height: initialHeight,
-          actual: undefined // Actual dimensions will come from mockValidateFile
+          actual: undefined 
         },
-        // htmlContent: undefined, // Not used in v1.1.0
       };
     });
 
@@ -224,17 +224,17 @@ export default function HomePage() {
       let finalStatus = mockResultPart.status;
       if (initialResults[index].status === 'error' || finalIssues.some(issue => issue.type === 'error')) {
         finalStatus = 'error';
-      } else if (finalStatus !== 'error' && finalIssues.some(issue => issue.type === 'warning')) {
+      } else if (finalStatus !== 'error' && (initialResults[index].status === 'warning' || finalIssues.some(issue => issue.type === 'warning'))) {
         finalStatus = 'warning';
       }
 
+
       return {
-        ...initialResults[index], // Keep initial id, fileName, fileSize
-        ...mockResultPart, // Get status, issues, adDimensions, etc. from mock
-        // htmlContent: undefined, // Not used in v1.1.0
+        ...initialResults[index], 
+        ...mockResultPart, 
         issues: finalIssues,
         status: finalStatus,
-        adDimensions: mockResultPart.adDimensions
+        adDimensions: mockResultPart.adDimensions,
       };
     });
 
@@ -270,7 +270,6 @@ export default function HomePage() {
             height: errorInitialHeight,
             actual: undefined
           },
-          // htmlContent: undefined, // Not used in v1.1.0
         };
         setValidationResults(prevResults =>
           prevResults.map(pr => (pr.fileName === selectedFiles[i].name && (pr.status === 'validating' || pr.id.includes('-pending-'))) ? errorResult : pr)
@@ -312,3 +311,4 @@ export default function HomePage() {
     </div>
   );
 }
+
