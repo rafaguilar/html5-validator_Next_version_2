@@ -27,7 +27,7 @@ const createMockIssue = (type: 'error' | 'warning', message: string, details?: s
 });
 
 
-const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id' | 'fileName' | 'fileSize' | 'htmlContent'>> => {
+const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id' | 'fileName' | 'fileSize'>> => {
   await new Promise(resolve => setTimeout(resolve, 100 + Math.random() * 200));
 
   const issues: ValidationIssue[] = [];
@@ -89,7 +89,7 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
       // Fallback to filename dimensions if meta tag was problematic but filename had good info
       expectedDim = { width: fileIntrinsicWidth, height: fileIntrinsicHeight };
       if (simulatedMetaTagContentString === null || !simulatedMetaTagContentString.includes(`width=${fileIntrinsicWidth}`) || !simulatedMetaTagContentString.includes(`height=${fileIntrinsicHeight}`)) {
-         issues.push(createMockIssue('warning', 'Ad dimensions inferred from filename due to missing/invalid ad.size meta tag.'));
+         // This warning is fine if meta tag was bad/missing but filename gave us the info
       }
   } else if (POSSIBLE_FALLBACK_DIMENSIONS.length > 0) {
       // Further fallback if neither meta tag nor filename provided clear dimensions
@@ -116,14 +116,10 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
   }
 
   const clickTagScenario = Math.random();
-  if (clickTagScenario > 0.05) { // 95% chance clicktags are found (increased from 90%)
-    const ct1IsHttps = Math.random() > 0.1; // 90% chance clickTag1 is HTTPS (was always true)
-    const ct1Url = ct1IsHttps ? "https://www.symbravohcp.com" : "http://www.symbravohcp.com";
-    const ct1: ClickTagInfo = { name: 'clickTag', url: ct1Url, isHttps: ct1IsHttps };
+  if (clickTagScenario > 0.1) { // 90% chance clicktags are found
+    const ct1: ClickTagInfo = { name: 'clickTag', url: "https://www.symbravohcp.com", isHttps: true };
     detectedClickTags.push(ct1);
-    if (!ct1.isHttps) {
-      issues.push(createMockIssue('warning', `ClickTag '${ct1.name}' uses non-HTTPS URL.`, `URL: ${ct1.url}`));
-    }
+    // No warning for ct1 as it's always https here in this version of mock
 
     if (Math.random() > 0.3) { // 70% of those also have clickTag2
         const ct2IsHttps = Math.random() > 0.2; // 80% chance clickTag2 is https
@@ -134,11 +130,12 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
           issues.push(createMockIssue('warning', `ClickTag '${ct2.name}' uses non-HTTPS URL.`, `URL: ${ct2.url}`));
         }
     }
-  } else { // 5% chance missing clickTags
+  } else { // 10% chance missing clickTags
     issues.push(createMockIssue('error', 'Missing or invalid clickTag implementation.'));
   }
 
-  const fileStructureOk = true; // Assume true for mock, real check would be complex
+
+  const fileStructureOk = true; // Always true for mock in v1.1.0
 
   if (Math.random() < 0.10 && issues.length === 0 && !isTooLarge) {
      issues.push(createMockIssue('warning', 'Creative uses deprecated JavaScript features.', 'Consider updating to modern ES6+ syntax for better performance and compatibility.'));
@@ -213,7 +210,7 @@ export default function HomePage() {
           height: initialHeight,
           actual: undefined // Actual dimensions will come from mockValidateFile
         },
-        htmlContent: undefined, // HTML content is not used for placeholder previews
+        // htmlContent: undefined, // Not used in v1.1.0
       };
     });
 
@@ -234,10 +231,9 @@ export default function HomePage() {
       return {
         ...initialResults[index], // Keep initial id, fileName, fileSize
         ...mockResultPart, // Get status, issues, adDimensions, etc. from mock
-        htmlContent: undefined, // Ensure htmlContent is undefined for placeholder previews
+        // htmlContent: undefined, // Not used in v1.1.0
         issues: finalIssues,
         status: finalStatus,
-        // Ensure adDimensions from mockValidateFile are used, which now correctly considers filename and meta tag simulation
         adDimensions: mockResultPart.adDimensions
       };
     });
@@ -274,7 +270,7 @@ export default function HomePage() {
             height: errorInitialHeight,
             actual: undefined
           },
-          htmlContent: undefined,
+          // htmlContent: undefined, // Not used in v1.1.0
         };
         setValidationResults(prevResults =>
           prevResults.map(pr => (pr.fileName === selectedFiles[i].name && (pr.status === 'validating' || pr.id.includes('-pending-'))) ? errorResult : pr)
@@ -316,4 +312,3 @@ export default function HomePage() {
     </div>
   );
 }
-

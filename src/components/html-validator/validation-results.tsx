@@ -12,7 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CheckCircle2, XCircle, AlertTriangle, FileText, Image as ImageIconLucide, Archive, ExternalLink, Info, LinkIcon, Download, Loader2, Eye } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import Image from 'next/image'; // Import next/image
+// Image component from next/image is removed as previews are not part of v1.1.0
 
 interface ValidationResultsProps {
   results: ValidationResult[];
@@ -61,17 +61,11 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
     const input = reportRef.current;
     if (input && results.length > 0) {
       setIsGeneratingPdf(true);
-      // Temporarily make iframes visible for capture if they were hidden
-      // const iframes = input.querySelectorAll('iframe');
-      // iframes.forEach(iframe => iframe.style.visibility = 'visible');
-
       html2canvas(input, {
         scale: 2,
         useCORS: true,
         logging: false,
         allowTaint: true,
-        // onclone: (documentClone) => { // Simplified as iframe is removed
-        // }
       })
         .then((canvas) => {
           const imgData = canvas.toDataURL('image/png');
@@ -94,32 +88,30 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
           let y = 20;
           const pageHeightWithMargin = pdf.internal.pageSize.getHeight() - 40;
           let heightLeft = scaledHeight;
-          // let currentPositionOnImage = 0; // Tracks the y-position on the original canvas image
-
-          // Add title to the PDF
+          
           pdf.setFontSize(18);
           pdf.text("Validation Report", pdfWidth / 2, y + 10, { align: "center" });
           y += 30;
 
 
-          let positionOnCanvas = 0; // Y-coordinate on the source canvas
+          let positionOnCanvas = 0; 
 
           while (heightLeft > 0) {
-            const pageContentHeight = Math.min(pageHeightWithMargin - (heightLeft === scaledHeight ? y : 20) , heightLeft); // available height on current PDF page
-            const sourceRectHeight = pageContentHeight / ratio; // height of the slice from original canvas
+            const pageContentHeight = Math.min(pageHeightWithMargin - (heightLeft === scaledHeight ? y : 20) , heightLeft); 
+            const sourceRectHeight = pageContentHeight / ratio; 
 
             pdf.addImage(
               imgData,
               'PNG',
-              15, // x margin
-              heightLeft === scaledHeight ? y : 20, // y position on PDF page
-              scaledWidth - 30, // width on PDF page (with margins)
-              pageContentHeight, // height of the image slice on PDF page
-              undefined, // alias
-              'FAST', // compression
-              0, // rotation
-              0, // x in original image (always 0 for full width slice)
-              positionOnCanvas // y in original image
+              15, 
+              heightLeft === scaledHeight ? y : 20, 
+              scaledWidth - 30, 
+              pageContentHeight, 
+              undefined, 
+              'FAST', 
+              0, 
+              0, 
+              positionOnCanvas 
             );
 
             heightLeft -= pageContentHeight;
@@ -137,7 +129,6 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
         })
         .finally(() => {
           setIsGeneratingPdf(false);
-           // iframes.forEach(iframe => iframe.style.visibility = '');
         });
     }
   };
@@ -185,13 +176,7 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
         )}
       </div>
       <div ref={reportRef}>
-        {results.map(result => {
-          const previewWidth = result.adDimensions?.actual?.width || result.adDimensions?.width || 0;
-          const previewHeight = result.adDimensions?.actual?.height || result.adDimensions?.height || 0;
-          const placeholderUrl = `https://placehold.co/${previewWidth || 300}x${previewHeight || 250}.png`;
-
-
-          return (
+        {results.map(result => (
             <Card key={result.id} className="shadow-lg overflow-hidden mb-6">
               <CardHeader className={`flex flex-row items-center justify-between space-y-0 pb-2 ${
                 result.status === 'success' ? 'bg-green-500/10' :
@@ -210,13 +195,13 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
                 <Badge variant={
                   result.status === 'success' ? 'default' :
                   result.status === 'error' ? 'destructive' :
-                  result.status === 'warning' ? 'default' :
+                  result.status === 'warning' ? 'default' : // Using 'default' for warning which will use accent color
                   'secondary'
                 }
                 className={`py-1 px-3 text-sm ${
                     result.status === 'success' ? 'bg-green-600 text-white' :
                     result.status === 'error' ? 'bg-destructive text-destructive-foreground' :
-                    result.status === 'warning' ? 'bg-accent text-accent-foreground' :
+                    result.status === 'warning' ? 'bg-accent text-accent-foreground' : // Accent for warning
                     ''
                 }`}
                 >
@@ -263,24 +248,7 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
                   )}
                 </div>
 
-                {previewWidth > 0 && previewHeight > 0 && (
-                  <div className="pt-4">
-                    <h4 className="text-md font-medium text-foreground mb-2 flex items-center">
-                      <Eye className="w-4 h-4 mr-2 text-primary" /> Banner Preview:
-                    </h4>
-                    <div className="bg-secondary/30 p-3 rounded-md flex justify-center items-center overflow-hidden" style={{ width: '100%', maxWidth: `${previewWidth}px`, margin: '0 auto' }}>
-                       <Image
-                          src={placeholderUrl}
-                          alt={`Banner Preview ${previewWidth}x${previewHeight}`}
-                          width={previewWidth}
-                          height={previewHeight}
-                          className="max-w-full h-auto border rounded shadow-md bg-background"
-                          data-ai-hint="advertisement banner"
-                        />
-                    </div>
-                  </div>
-                )}
-
+                {/* Banner Preview Section Removed for v1.1.0 */}
 
                 {result.detectedClickTags && result.detectedClickTags.length > 0 && (
                   <div>
@@ -343,10 +311,9 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
                  </CardFooter>
               )}
             </Card>
-          );
-        })}
+          )
+        )}
       </div>
     </div>
   );
 }
-
