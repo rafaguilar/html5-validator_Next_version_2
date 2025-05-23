@@ -1,8 +1,15 @@
+
 export interface ValidationIssue {
   id: string;
   type: 'error' | 'warning';
   message: string;
   details?: string;
+}
+
+export interface ClickTagInfo {
+  name: string;
+  url: string;
+  isHttps: boolean;
 }
 
 export interface ValidationResult {
@@ -12,7 +19,7 @@ export interface ValidationResult {
   issues: ValidationIssue[];
   adDimensions?: { width: number; height: number; actual?: {width: number; height: number} };
   fileStructureOk?: boolean;
-  clickTagFound?: boolean;
+  detectedClickTags?: ClickTagInfo[];
   fileSize?: number; // in bytes
   maxFileSize?: number; // in bytes
 }

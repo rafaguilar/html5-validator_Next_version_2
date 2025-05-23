@@ -1,10 +1,9 @@
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-body {
-  font-family: Arial, Helvetica, sans-serif;
-}
+/* Removed: body { font-family: Arial, Helvetica, sans-serif; } to allow Next/Font (Geist) to apply */
 
 @layer base {
   :root {

@@ -5,7 +5,7 @@ import React, { useState, useEffect } from 'react';
 import { AppHeader } from '@/components/layout/header';
 import { FileUploader } from '@/components/html-validator/file-uploader';
 import { ValidationResults } from '@/components/html-validator/validation-results';
-import type { ValidationResult, ValidationIssue } from '@/types';
+import type { ValidationResult, ValidationIssue, ClickTagInfo } from '@/types';
 import { useToast } from "@/hooks/use-toast";
 
 // Mock data and functions
@@ -31,54 +31,46 @@ const createMockIssue = (type: 'error' | 'warning', message: string, details?: s
 });
 
 const mockValidateFile = async (file: File): Promise<ValidationResult> => {
-  await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 1500)); // Simulate network delay
+  await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 1000)); // Simulate network delay
 
   const issues: ValidationIssue[] = [];
   let status: ValidationResult['status'] = 'success'; // Assume success initially
+  const detectedClickTags: ClickTagInfo[] = [];
   
   let actualMetaWidth: number | undefined = undefined;
   let actualMetaHeight: number | undefined = undefined;
-  let simulatedMetaTagContentString: string | null = null; // Used for error reporting if parsing fails
+  let simulatedMetaTagContentString: string | null = null;
 
   // Attempt to parse dimensions from filename (e.g., "..._160x600.zip")
   let fileIntrinsicWidth: number | undefined;
   let fileIntrinsicHeight: number | undefined;
   const filenameDimMatch = file.name.match(/_(\d+)x(\d+)(?:[^/]*)\.zip$/i);
+
   if (filenameDimMatch && filenameDimMatch[1] && filenameDimMatch[2]) {
     fileIntrinsicWidth = parseInt(filenameDimMatch[1], 10);
     fileIntrinsicHeight = parseInt(filenameDimMatch[2], 10);
-  }
-
-  if (fileIntrinsicWidth !== undefined && fileIntrinsicHeight !== undefined) {
     // If filename provides dimensions, assume the ad.size meta tag is present and correctly reflects these dimensions.
-    // This ensures "Detected" dimensions will match the filename for these specific files.
     actualMetaWidth = fileIntrinsicWidth;
     actualMetaHeight = fileIntrinsicHeight;
-    // simulatedMetaTagContentString = `width=${fileIntrinsicWidth},height=${fileIntrinsicHeight}`; // For potential error reporting, though not used if this path is taken
+    simulatedMetaTagContentString = `width=${fileIntrinsicWidth},height=${fileIntrinsicHeight}`;
   } else {
     // Filename does NOT provide dimensions. Simulate random meta tag scenarios.
     const metaTagScenario = Math.random();
-
     if (metaTagScenario < 0.05) { // 5% chance meta tag is completely missing
       simulatedMetaTagContentString = null; 
       issues.push(createMockIssue('error', 'Required ad.size meta tag not found in HTML.', 'Ensure <meta name="ad.size" content="width=XXX,height=XXX"> is present.'));
-      // actualMetaWidth/Height remain undefined
     } else if (metaTagScenario < 0.15) { // 10% chance meta tag is present but malformed
       const malformType = Math.random();
       if (malformType < 0.25) simulatedMetaTagContentString = "width=300,height=BAD";
       else if (malformType < 0.50) simulatedMetaTagContentString = "width=300";
       else if (malformType < 0.75) simulatedMetaTagContentString = "height=250";
-      else simulatedMetaTagContentString = "size=300x250"; // A common malformation
-      
+      else simulatedMetaTagContentString = "size=300x250";
       issues.push(createMockIssue('error', 'Invalid ad.size meta tag format.', `Meta tag content found: "${simulatedMetaTagContentString}". Expected format: "width=XXX,height=XXX".`));
-      // actualMetaWidth/Height remain undefined (as they can't be parsed from malformed string)
     } else { // 85% chance meta tag is present and notionally parsable
-      // Pick random dimensions for the meta tag since filename didn't specify any
       const chosenFallbackDim = POSSIBLE_ACTUAL_DIMENSIONS_FROM_META[Math.floor(Math.random() * POSSIBLE_ACTUAL_DIMENSIONS_FROM_META.length)];
       simulatedMetaTagContentString = `width=${chosenFallbackDim.width},height=${chosenFallbackDim.height}`;
       
-      // Now, try to parse this simulatedMetaTagContentString
-      const match = simulatedMetaTagContentString.match(/width=(\d+)[,;]?\s*height=(\d+)/i); // Flexible parsing
+      const match = simulatedMetaTagContentString.match(/width=(\d+)[,;]?\s*height=(\d+)/i);
       if (match && match[1] && match[2]) {
         const wVal = parseInt(match[1], 10);
         const hVal = parseInt(match[2], 10);
@@ -87,36 +79,24 @@ const mockValidateFile = async (file: File): Promise<ValidationResult> => {
           actualMetaHeight = hVal;
         } else {
           issues.push(createMockIssue('error', 'Invalid numeric values in ad.size meta tag.', `Parsed non-numeric values from: "${simulatedMetaTagContentString}"`));
-          // actualMetaWidth/Height remain undefined
         }
       } else {
          issues.push(createMockIssue('error', 'Malformed ad.size meta tag content.', `Content: "${simulatedMetaTagContentString}". Expected "width=XXX,height=YYY".`));
-         // actualMetaWidth/Height remain undefined
       }
     }
   }
 
-  // Determine expected dimensions for the report.
-  // The primary source for "expected" is what the meta tag *says* (if valid).
   let expectedDim: { width: number; height: number };
-
   if (actualMetaWidth !== undefined && actualMetaHeight !== undefined) {
-    // If the ad.size meta tag provided valid dimensions (either from filename or random simulation),
-    // these are considered the "expected" dimensions for this specific creative.
     expectedDim = { width: actualMetaWidth, height: actualMetaHeight };
   } else {
-    // If actualMetaWidth/Height are undefined (e.g. meta tag missing/malformed in the "no filename dimensions" case)
-    // Fallback: Try to use dimensions from filename if available.
     if (fileIntrinsicWidth !== undefined && fileIntrinsicHeight !== undefined) {
         expectedDim = { width: fileIntrinsicWidth, height: fileIntrinsicHeight };
-    } 
-    // Else, fall back to a randomly selected "expected" dimension from the mock list
-    else if (MOCK_EXPECTED_DIMENSIONS.length > 0) {
+    } else if (MOCK_EXPECTED_DIMENSIONS.length > 0) {
         expectedDim = MOCK_EXPECTED_DIMENSIONS[Math.floor(Math.random() * MOCK_EXPECTED_DIMENSIONS.length)];
     } else {
-        expectedDim = { width: 0, height: 0 }; // Absolute fallback
+        expectedDim = { width: 0, height: 0 }; 
     }
-    // An error for the missing/malformed meta tag (if applicable) would have already been added.
   }
 
   const adDimensions: ValidationResult['adDimensions'] = {
@@ -124,29 +104,41 @@ const mockValidateFile = async (file: File): Promise<ValidationResult> => {
     height: expectedDim.height, 
     actual: (actualMetaWidth !== undefined && actualMetaHeight !== undefined)
             ? { width: actualMetaWidth, height: actualMetaHeight }
-            : undefined, // "actual" is only populated if meta tag was successfully parsed or derived from filename
+            : undefined,
   };
 
-  // --- Existing mock checks (file size, clickTag, file structure) ---
+  // File Size Check
   const isTooLarge = file.size > MOCK_MAX_FILE_SIZE;
   if (isTooLarge) {
     issues.push(createMockIssue('error', `File size exceeds limit (${(MOCK_MAX_FILE_SIZE / (1024*1024)).toFixed(1)}MB).`));
   }
 
-  const hasClickTag = Math.random() > 0.3; // 70% chance of having clickTag
-  if (!hasClickTag) {
+  // ClickTag Simulation
+  const clickTagScenario = Math.random();
+  if (clickTagScenario > 0.1) { // 90% chance to find clickTags
+    const ct1 = { name: 'clickTag', url: "https://www.symbravohcp.com", isHttps: true };
+    const ct2 = { name: 'clickTag2', url: "http://www.axsome.com/symbravo-prescribing-information.pdf", isHttps: false };
+    detectedClickTags.push(ct1, ct2);
+
+    if (!ct2.isHttps) {
+      issues.push(createMockIssue('warning', `ClickTag '${ct2.name}' uses non-HTTPS URL.`, `URL: ${ct2.url}`));
+    }
+  } else { // 10% chance no clickTags are found
     issues.push(createMockIssue('error', 'Missing or invalid clickTag implementation.'));
   }
-
-  const validFileStructure = Math.random() > 0.2; // 80% chance of valid structure
-  if (!validFileStructure) {
-    issues.push(createMockIssue('error', 'Invalid file structure. Primary HTML file not found at root.'));
-  }
   
-  if (Math.random() < 0.10 && issues.length === 0) { // 10% chance of a random warning if no other issues
+  // File Structure - now always valid for mock
+  const validFileStructure = true;
+  // No issue added for file structure as it's always true now.
+  // If it were to be false:
+  // if (!validFileStructure) {
+  //   issues.push(createMockIssue('error', 'Invalid file structure. Primary HTML file not found at root.'));
+  // }
+  
+  // Random warning if no other issues (and not too large, as that might be a warning itself)
+  if (Math.random() < 0.10 && issues.length === 0 && !isTooLarge) {
      issues.push(createMockIssue('warning', 'Creative uses deprecated JavaScript features.', 'Consider updating to modern ES6+ syntax for better performance and compatibility.'));
   }
-
 
   // --- Determine final status based on issues ---
   const hasErrors = issues.some(issue => issue.type === 'error');
@@ -160,9 +152,10 @@ const mockValidateFile = async (file: File): Promise<ValidationResult> => {
     status = 'success';
   }
   
-  if (status === 'success' && file.size > MOCK_MAX_FILE_SIZE * 0.75 && file.size <= MOCK_MAX_FILE_SIZE) {
+  // Add file size warning if large but not over limit, and no errors exist
+  if (!isTooLarge && file.size > MOCK_MAX_FILE_SIZE * 0.75 && !hasErrors) {
     issues.push(createMockIssue('warning', 'File size is large, consider optimizing assets for faster loading.', `Current size: ${(file.size / (1024*1024)).toFixed(2)}MB.`));
-    if (!hasErrors) status = 'warning'; 
+    if (status !== 'error') status = 'warning'; // Ensure status becomes warning if not already error
   }
 
 
@@ -173,7 +166,7 @@ const mockValidateFile = async (file: File): Promise<ValidationResult> => {
     issues,
     adDimensions, 
     fileStructureOk: validFileStructure,
-    clickTagFound: hasClickTag,
+    detectedClickTags: detectedClickTags.length > 0 ? detectedClickTags : undefined,
     fileSize: file.size,
     maxFileSize: MOCK_MAX_FILE_SIZE,
   };
@@ -198,7 +191,6 @@ export default function HomePage() {
 
     setIsLoading(true);
     const initialResults = selectedFiles.map(file => {
-      // Attempt to get initial dimensions from filename for pending state
       let initialWidth = 0;
       let initialHeight = 0;
       const filenameDimMatch = file.name.match(/_(\d+)x(\d+)(?:[^/]*)\.zip$/i);
@@ -206,7 +198,7 @@ export default function HomePage() {
         initialWidth = parseInt(filenameDimMatch[1], 10);
         initialHeight = parseInt(filenameDimMatch[2], 10);
       } else if (MOCK_EXPECTED_DIMENSIONS.length > 0) {
-        const tempDim = MOCK_EXPECTED_DIMENSIONS[0]; // Default to first mock if no filename match
+        const tempDim = MOCK_EXPECTED_DIMENSIONS[0];
         initialWidth = tempDim.width;
         initialHeight = tempDim.height;
       }
@@ -218,10 +210,11 @@ export default function HomePage() {
         issues: [],
         fileSize: file.size,
         maxFileSize: MOCK_MAX_FILE_SIZE,
+        fileStructureOk: true, // Assume ok initially for pending state
         adDimensions: { 
           width: initialWidth, 
           height: initialHeight,
-          actual: undefined // Actual unknown until validation
+          actual: undefined
         }
       };
     });
@@ -256,6 +249,7 @@ export default function HomePage() {
           status: 'error',
           issues: [createMockIssue('error', 'An unexpected error occurred during validation.')],
           fileSize: selectedFiles[i].size,
+          fileStructureOk: false,
            adDimensions: {
             width: errorInitialWidth,
             height: errorInitialHeight,
@@ -302,4 +296,3 @@ export default function HomePage() {
     </div>
   );
 }
-

@@ -1,10 +1,11 @@
+
 "use client";
 
-import type { ValidationResult, ValidationIssue } from '@/types';
+import type { ValidationResult, ValidationIssue, ClickTagInfo } from '@/types';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Badge } from '@/components/ui/badge';
-import { CheckCircle2, XCircle, AlertTriangle, FileText, Image as ImageIcon, Archive, ExternalLink, Info } from 'lucide-react';
+import { CheckCircle2, XCircle, AlertTriangle, FileText, Image as ImageIcon, Archive, ExternalLink, Info, LinkIcon } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
 interface ValidationResultsProps {
@@ -19,7 +20,7 @@ const StatusIcon = ({ status }: { status: ValidationResult['status'] }) => {
     case 'error':
       return <XCircle className="w-5 h-5 text-destructive" />;
     case 'warning':
-      return <AlertTriangle className="w-5 h-5 text-yellow-500" />; // Custom yellow if not covered by accent
+      return <AlertTriangle className="w-5 h-5 text-accent" />; 
     default:
       return <Info className="w-5 h-5 text-muted-foreground" />;
   }
@@ -30,7 +31,7 @@ const IssueIcon = ({ type }: { type: ValidationIssue['type'] }) => {
     case 'error':
       return <XCircle className="w-4 h-4 text-destructive mr-2 flex-shrink-0" />;
     case 'warning':
-      return <AlertTriangle className="w-4 h-4 text-yellow-500 mr-2 flex-shrink-0" />; // Custom yellow
+      return <AlertTriangle className="w-4 h-4 text-accent mr-2 flex-shrink-0" />; 
     default:
       return <Info className="w-4 h-4 text-muted-foreground mr-2 flex-shrink-0" />;
   }
@@ -48,8 +49,6 @@ const formatBytes = (bytes: number, decimals = 2) => {
 
 export function ValidationResults({ results, isLoading }: ValidationResultsProps) {
   if (isLoading && results.length === 0) {
-    // This state is handled by the button text usually.
-    // If there's a global loading screen for results, it could go here.
     return null;
   }
 
@@ -73,7 +72,7 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
           <CardHeader className={`flex flex-row items-center justify-between space-y-0 pb-2 ${
             result.status === 'success' ? 'bg-green-500/10' :
             result.status === 'error' ? 'bg-destructive/10' :
-            result.status === 'warning' ? 'bg-yellow-500/10' : // Custom yellow
+            result.status === 'warning' ? 'bg-accent/10' : 
             'bg-muted/30'
           }`}>
             <div className="min-w-0">
@@ -85,15 +84,15 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
               </CardDescription>
             </div>
             <Badge variant={
-              result.status === 'success' ? 'default' : // Assuming default is green-ish via custom theme or explicit style
+              result.status === 'success' ? 'default' : 
               result.status === 'error' ? 'destructive' :
-              result.status === 'warning' ? 'default' : // Using default for warning, can customize badge further
+              result.status === 'warning' ? 'default' : 
               'secondary'
             }
             className={`py-1 px-3 text-sm ${
                 result.status === 'success' ? 'bg-green-600 text-white' :
                 result.status === 'error' ? 'bg-destructive text-destructive-foreground' :
-                result.status === 'warning' ? 'bg-yellow-500 text-white' : // Custom yellow
+                result.status === 'warning' ? 'bg-accent text-accent-foreground' : 
                 ''
             }`}
             >
@@ -126,15 +125,6 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
                   </div>
                 </div>
               )}
-              {typeof result.clickTagFound === 'boolean' && (
-                <div className="flex items-start p-3 bg-secondary/30 rounded-md">
-                 {result.clickTagFound ? <CheckCircle2 className="w-5 h-5 text-green-500 mr-3 mt-0.5 flex-shrink-0" /> : <XCircle className="w-5 h-5 text-destructive mr-3 mt-0.5 flex-shrink-0" />}
-                  <div>
-                     <p className="font-medium text-foreground">ClickTag</p>
-                    <p className="text-muted-foreground">{result.clickTagFound ? 'Found' : 'Not Found / Invalid'}</p>
-                  </div>
-                </div>
-              )}
               {result.fileSize && (
                  <div className="flex items-start p-3 bg-secondary/30 rounded-md">
                   <Archive className="w-5 h-5 text-primary mr-3 mt-0.5 flex-shrink-0" />
@@ -148,6 +138,23 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
                 </div>
               )}
             </div>
+
+            {result.detectedClickTags && result.detectedClickTags.length > 0 && (
+              <div>
+                <h4 className="text-md font-medium text-foreground mb-2 flex items-center">
+                  <LinkIcon className="w-4 h-4 mr-2 text-primary" /> Detected ClickTags:
+                </h4>
+                <ul className="list-disc list-inside pl-4 space-y-1 text-sm bg-secondary/30 p-3 rounded-md">
+                  {result.detectedClickTags.map(ct => (
+                    <li key={ct.name} className="text-muted-foreground">
+                      <span className="font-medium text-foreground">{ct.name}:</span> {ct.url}
+                      {!ct.isHttps && <Badge variant="outline" className="ml-2 border-accent text-accent">Non-HTTPS</Badge>}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
 
             {result.issues.length > 0 && (
               <div>
