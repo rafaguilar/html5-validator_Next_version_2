@@ -9,7 +9,6 @@ import type { ValidationResult, ValidationIssue, ClickTagInfo } from '@/types';
 import { useToast } from "@/hooks/use-toast";
 
 const MOCK_MAX_FILE_SIZE = 2.2 * 1024 * 1024; // 2.2MB
-// Represents potential ad slot sizes or campaign requirements
 const POSSIBLE_FALLBACK_DIMENSIONS = [
   { width: 300, height: 250 }, { width: 728, height: 90 },
   { width: 160, height: 600 }, { width: 300, height: 600 },
@@ -50,7 +49,7 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
     actualMetaWidth = fileIntrinsicWidth;
     actualMetaHeight = fileIntrinsicHeight;
   } else {
-    // If no dimensions in filename, simulate various meta tag states for files not matching the pattern
+    // If no dimensions in filename, simulate various meta tag states
     const metaTagScenario = Math.random();
     if (metaTagScenario < 0.05) { // 5% chance: meta tag missing
       simulatedMetaTagContentString = null;
@@ -60,7 +59,7 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
       if (malformType < 0.25) simulatedMetaTagContentString = "width=300,height=BAD";
       else if (malformType < 0.50) simulatedMetaTagContentString = "width=300";
       else if (malformType < 0.75) simulatedMetaTagContentString = "height=250";
-      else simulatedMetaTagContentString = "size=300x250"; // common error
+      else simulatedMetaTagContentString = "size=300x250";
       issues.push(createMockIssue('error', 'Invalid ad.size meta tag format.', `Meta tag content found: "${simulatedMetaTagContentString}". Expected format: "width=XXX,height=XXX".`));
     } else { // 85% chance: meta tag present and correct (using a fallback dimension)
       const chosenFallbackDim = POSSIBLE_FALLBACK_DIMENSIONS[Math.floor(Math.random() * POSSIBLE_FALLBACK_DIMENSIONS.length)];
@@ -81,27 +80,20 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
     }
   }
 
-
   let expectedDim: { width: number; height: number };
   if (actualMetaWidth !== undefined && actualMetaHeight !== undefined) {
     expectedDim = { width: actualMetaWidth, height: actualMetaHeight };
   } else if (fileIntrinsicWidth !== undefined && fileIntrinsicHeight !== undefined) {
       expectedDim = { width: fileIntrinsicWidth, height: fileIntrinsicHeight };
-      if (simulatedMetaTagContentString === null || !simulatedMetaTagContentString.includes(`width=${fileIntrinsicWidth}`) || !simulatedMetaTagContentString.includes(`height=${fileIntrinsicHeight}`)) {
-        // This warning is generated if meta tag was problematic but filename gave dimensions.
-        // Error for missing/malformed meta tag is generated above.
-      }
   } else if (POSSIBLE_FALLBACK_DIMENSIONS.length > 0) {
-      // If meta tag was problematic AND filename had no dimensions, pick a random expected dimension
       expectedDim = POSSIBLE_FALLBACK_DIMENSIONS[Math.floor(Math.random() * POSSIBLE_FALLBACK_DIMENSIONS.length)];
-      if (!simulatedMetaTagContentString) { // Only issue this if meta tag was missing entirely
+      if (!simulatedMetaTagContentString) {
         issues.push(createMockIssue('warning', 'Ad dimensions are a fallback guess. Verify ad.size meta tag and filename conventions.'));
       }
   } else {
-      expectedDim = { width: 300, height: 250 }; // Absolute fallback
+      expectedDim = { width: 300, height: 250 };
       issues.push(createMockIssue('error', 'Could not determine ad dimensions. Ensure ad.size meta tag or filename convention is used.'));
   }
-
 
   const adDimensions: ValidationResult['adDimensions'] = {
     width: expectedDim.width,
@@ -116,43 +108,48 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
     issues.push(createMockIssue('error', `File size exceeds limit (${(MOCK_MAX_FILE_SIZE / (1024*1024)).toFixed(1)}MB).`));
   }
 
-  const clickTagScenario = Math.random();
-  if (clickTagScenario > 0.1) { // 90% chance clicktags are found
-    // Simulate clickTag1 - Always HTTPS as per user example
-    const ct1BaseUrl = "www.symbravohcp.com";
-    const ct1Url = `https://${ct1BaseUrl}`; // Hardcoded to HTTPS
-    const ct1: ClickTagInfo = {
-      name: 'clickTag',
-      url: ct1Url,
-      isHttps: ct1Url.startsWith('https://')
-    };
-    detectedClickTags.push(ct1);
+  // ClickTag Simulation
+  const clickTagPresenceScenario = Math.random();
+  if (clickTagPresenceScenario > 0.1) { // 90% chance clicktags are found
+    const numberOfClickTags = Math.floor(Math.random() * 3) + 1; // 1 to 3 clicktags
+    const baseUrls = ["www.example-campaign.com", "www.product-landingpage.net/info", "www.another-partner.org/details.pdf"];
+    const commonNames = ["clickTag", "clickTag2", "clickTag3", "exitUrl", "backupClick"];
 
-    // Simulate clickTag2 (70% chance if clickTag1 exists) - Always HTTP if present
-    if (Math.random() > 0.3) {
-      const ct2BaseUrl = "www.axsome.com/symbravo-prescribing-information.pdf";
-      const ct2Url = `http://${ct2BaseUrl}`; // Hardcoded to HTTP
-      const ct2: ClickTagInfo = {
-        name: 'clickTag2',
-        url: ct2Url,
-        isHttps: ct2Url.startsWith('https://')
-      };
-      detectedClickTags.push(ct2);
-    }
-
-    // Iterate through all detected clickTags and add warnings if not HTTPS
-    for (const tag of detectedClickTags) {
-      if (!tag.isHttps) {
-        issues.push(createMockIssue('warning', `ClickTag '${tag.name}' uses non-HTTPS URL.`, `URL: ${tag.url}`));
+    for (let i = 0; i < numberOfClickTags; i++) {
+      const nameIndex = Math.floor(Math.random() * commonNames.length);
+      let name = commonNames[nameIndex];
+      // Ensure unique names if multiple tags
+      if (detectedClickTags.some(ct => ct.name === name) && numberOfClickTags > 1) {
+          name = i === 0 ? "clickTag" : `clickTag${i + 1}`;
       }
-    }
+      if (detectedClickTags.some(ct => ct.name === name) && i > 0) { // further ensure uniqueness if default "clickTag" was picked
+        name = `customTag${i + 1}`;
+      }
 
+
+      const baseUrl = baseUrls[Math.floor(Math.random() * baseUrls.length)];
+      const isHttpsRandom = Math.random() > 0.3; // 70% chance HTTPS, 30% HTTP
+      const protocol = isHttpsRandom ? "https://" : "http://";
+      const url = `${protocol}${baseUrl}/${name.toLowerCase().replace(' ','-')}-path-${i+1}`;
+
+      detectedClickTags.push({
+        name,
+        url,
+        isHttps: url.startsWith('https://'),
+      });
+    }
   } else { // 10% chance missing clickTags
     issues.push(createMockIssue('error', 'Missing or invalid clickTag implementation.'));
   }
 
+  // Iterate through all detected clickTags and add warnings if not HTTPS
+  for (const tag of detectedClickTags) {
+    if (!tag.isHttps) {
+      issues.push(createMockIssue('warning', `ClickTag '${tag.name}' uses non-HTTPS URL.`, `URL: ${tag.url}`));
+    }
+  }
 
-  const fileStructureOk = true; // Assume true for mock purposes based on previous resolution
+  const fileStructureOk = true; 
 
   if (Math.random() < 0.10 && issues.length === 0 && !isTooLarge) {
      issues.push(createMockIssue('warning', 'Creative uses deprecated JavaScript features.', 'Consider updating to modern ES6+ syntax for better performance and compatibility.'));
@@ -173,6 +170,7 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
     issues.push(createMockIssue('warning', 'File size is large, consider optimizing assets for faster loading.', `Current size: ${(file.size / (1024*1024)).toFixed(2)}MB.`));
     if (status !== 'error') status = 'warning';
   }
+
   return {
     status,
     issues,
@@ -209,7 +207,6 @@ export default function HomePage() {
         initialWidth = parseInt(filenameDimMatch[1], 10);
         initialHeight = parseInt(filenameDimMatch[2], 10);
       } else if (POSSIBLE_FALLBACK_DIMENSIONS.length > 0) {
-        // Fallback to a random dimension if not in filename, for initial display
         const tempDim = POSSIBLE_FALLBACK_DIMENSIONS[Math.floor(Math.random() * POSSIBLE_FALLBACK_DIMENSIONS.length)];
         initialWidth = tempDim.width;
         initialHeight = tempDim.height;
@@ -330,3 +327,5 @@ export default function HomePage() {
   );
 }
 
+
+    
