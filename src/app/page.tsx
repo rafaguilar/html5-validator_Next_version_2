@@ -86,18 +86,18 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
   if (actualMetaWidth !== undefined && actualMetaHeight !== undefined) {
     expectedDim = { width: actualMetaWidth, height: actualMetaHeight };
   } else if (fileIntrinsicWidth !== undefined && fileIntrinsicHeight !== undefined) {
-      // Fallback to filename dimensions if meta tag was problematic but filename had good info
       expectedDim = { width: fileIntrinsicWidth, height: fileIntrinsicHeight };
       if (simulatedMetaTagContentString === null || !simulatedMetaTagContentString.includes(`width=${fileIntrinsicWidth}`) || !simulatedMetaTagContentString.includes(`height=${fileIntrinsicHeight}`)) {
-         // This warning is fine if meta tag was bad/missing but filename gave us the info
+        // This warning is generated if meta tag was problematic but filename gave dimensions.
+        // Error for missing/malformed meta tag is generated above.
       }
   } else if (POSSIBLE_FALLBACK_DIMENSIONS.length > 0) {
-      // Further fallback if neither meta tag nor filename provided clear dimensions
       expectedDim = POSSIBLE_FALLBACK_DIMENSIONS[Math.floor(Math.random() * POSSIBLE_FALLBACK_DIMENSIONS.length)];
-      issues.push(createMockIssue('warning', 'Ad dimensions are a fallback guess. Verify ad.size meta tag and filename conventions.'));
+      if (!simulatedMetaTagContentString) { // Only issue this if meta tag was missing entirely
+        issues.push(createMockIssue('warning', 'Ad dimensions are a fallback guess. Verify ad.size meta tag and filename conventions.'));
+      }
   } else {
-      // Absolute fallback, should ideally not be reached if POSSIBLE_FALLBACK_DIMENSIONS is populated
-      expectedDim = { width: 300, height: 250 };
+      expectedDim = { width: 300, height: 250 }; // Absolute fallback
       issues.push(createMockIssue('error', 'Could not determine ad dimensions. Ensure ad.size meta tag or filename convention is used.'));
   }
 
@@ -117,24 +117,43 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
 
   const clickTagScenario = Math.random();
   if (clickTagScenario > 0.1) { // 90% chance clicktags are found
-    const ct1: ClickTagInfo = { name: 'clickTag', url: "https://www.symbravohcp.com", isHttps: true };
+    // Simulate clickTag1
+    const ct1UrlIsActuallyHttps = Math.random() > 0.2; // 80% chance of this URL being HTTPS
+    const ct1BaseUrl = "www.symbravohcp.com";
+    const ct1Url = `${ct1UrlIsActuallyHttps ? 'https' : 'http'}://${ct1BaseUrl}`;
+    const ct1: ClickTagInfo = {
+      name: 'clickTag',
+      url: ct1Url,
+      isHttps: ct1Url.startsWith('https://') // Derive from the actual URL
+    };
     detectedClickTags.push(ct1);
 
-    if (Math.random() > 0.3) { // 70% of those also have clickTag2
-        const ct2IsHttps = false; // Always make clickTag2 HTTP for this scenario
-        const ct2Url = "http://www.axsome.com/symbravo-prescribing-information.pdf"; // Fixed HTTP URL
-        const ct2: ClickTagInfo = { name: 'clickTag2', url: ct2Url, isHttps: ct2IsHttps };
-        detectedClickTags.push(ct2);
-        if (!ct2.isHttps) {
-          issues.push(createMockIssue('warning', `ClickTag '${ct2.name}' uses non-HTTPS URL.`, `URL: ${ct2.url}`));
-        }
+    // Simulate clickTag2 (70% chance if clickTag1 exists)
+    if (Math.random() > 0.3) {
+      const ct2UrlIsActuallyHttps = Math.random() > 0.5; // 50% chance of this URL being HTTPS
+      const ct2BaseUrl = "www.axsome.com/symbravo-prescribing-information.pdf";
+      const ct2Url = `${ct2UrlIsActuallyHttps ? 'https' : 'http'}://${ct2BaseUrl}`;
+      const ct2: ClickTagInfo = {
+        name: 'clickTag2',
+        url: ct2Url,
+        isHttps: ct2Url.startsWith('https://') // Derive from the actual URL
+      };
+      detectedClickTags.push(ct2);
     }
+
+    // Iterate through all detected clickTags and add warnings if not HTTPS
+    for (const tag of detectedClickTags) {
+      if (!tag.isHttps) {
+        issues.push(createMockIssue('warning', `ClickTag '${tag.name}' uses non-HTTPS URL.`, `URL: ${tag.url}`));
+      }
+    }
+
   } else { // 10% chance missing clickTags
     issues.push(createMockIssue('error', 'Missing or invalid clickTag implementation.'));
   }
 
 
-  const fileStructureOk = true; 
+  const fileStructureOk = true;
 
   if (Math.random() < 0.10 && issues.length === 0 && !isTooLarge) {
      issues.push(createMockIssue('warning', 'Creative uses deprecated JavaScript features.', 'Consider updating to modern ES6+ syntax for better performance and compatibility.'));
@@ -205,11 +224,11 @@ export default function HomePage() {
         issues: [],
         fileSize: file.size,
         maxFileSize: MOCK_MAX_FILE_SIZE,
-        fileStructureOk: true, 
+        fileStructureOk: true,
         adDimensions: {
           width: initialWidth,
           height: initialHeight,
-          actual: undefined 
+          actual: undefined
         },
       };
     });
@@ -230,8 +249,8 @@ export default function HomePage() {
 
 
       return {
-        ...initialResults[index], 
-        ...mockResultPart, 
+        ...initialResults[index],
+        ...mockResultPart,
         issues: finalIssues,
         status: finalStatus,
         adDimensions: mockResultPart.adDimensions,
@@ -311,4 +330,3 @@ export default function HomePage() {
     </div>
   );
 }
-
