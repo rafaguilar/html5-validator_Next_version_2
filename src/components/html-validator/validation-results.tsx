@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CheckCircle2, XCircle, AlertTriangle, FileText, Image as ImageIconLucide, Archive, ExternalLink, Info, LinkIcon, Download, Loader2, Eye } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import Image from 'next/image'; // Import next/image
 
 interface ValidationResultsProps {
   results: ValidationResult[];
@@ -25,7 +26,7 @@ const StatusIcon = ({ status }: { status: ValidationResult['status'] }) => {
     case 'error':
       return <XCircle className="w-5 h-5 text-destructive" />;
     case 'warning':
-      return <AlertTriangle className="w-5 h-5 text-accent" />; 
+      return <AlertTriangle className="w-5 h-5 text-accent" />;
     default:
       return <Info className="w-5 h-5 text-muted-foreground" />;
   }
@@ -36,7 +37,7 @@ const IssueIcon = ({ type }: { type: ValidationIssue['type'] }) => {
     case 'error':
       return <XCircle className="w-4 h-4 text-destructive mr-2 flex-shrink-0" />;
     case 'warning':
-      return <AlertTriangle className="w-4 h-4 text-accent mr-2 flex-shrink-0" />; 
+      return <AlertTriangle className="w-4 h-4 text-accent mr-2 flex-shrink-0" />;
     default:
       return <Info className="w-4 h-4 text-muted-foreground mr-2 flex-shrink-0" />;
   }
@@ -61,28 +62,16 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
     if (input && results.length > 0) {
       setIsGeneratingPdf(true);
       // Temporarily make iframes visible for capture if they were hidden
-      const iframes = input.querySelectorAll('iframe');
-      iframes.forEach(iframe => iframe.style.visibility = 'visible');
+      // const iframes = input.querySelectorAll('iframe');
+      // iframes.forEach(iframe => iframe.style.visibility = 'visible');
 
-      html2canvas(input, { 
-        scale: 2, 
-        useCORS: true, 
+      html2canvas(input, {
+        scale: 2,
+        useCORS: true,
         logging: false,
-        allowTaint: true, // Important for iframes
-        onclone: (documentClone) => {
-          Array.from(documentClone.querySelectorAll('iframe')).forEach((iframe, index) => {
-            const originalIframe = input.querySelectorAll('iframe')[index];
-            // @ts-ignore: srcdoc exists on iframe
-            if (originalIframe && originalIframe.srcdoc) {
-              try {
-                // @ts-ignore: srcdoc exists on iframe
-                iframe.srcdoc = originalIframe.srcdoc; 
-              } catch (e) {
-                console.warn("Could not clone iframe content for PDF", e);
-              }
-            }
-          });
-        }
+        allowTaint: true,
+        // onclone: (documentClone) => { // Simplified as iframe is removed
+        // }
       })
         .then((canvas) => {
           const imgData = canvas.toDataURL('image/png');
@@ -94,18 +83,18 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
 
           const imgProps = pdf.getImageProperties(imgData);
           const pdfWidth = pdf.internal.pageSize.getWidth();
-          
+
           const canvasWidth = imgProps.width;
           const canvasHeight = imgProps.height;
 
           const ratio = pdfWidth / canvasWidth;
           const scaledWidth = canvasWidth * ratio;
           const scaledHeight = canvasHeight * ratio;
-          
-          let y = 20; 
-          const pageHeightWithMargin = pdf.internal.pageSize.getHeight() - 40; 
+
+          let y = 20;
+          const pageHeightWithMargin = pdf.internal.pageSize.getHeight() - 40;
           let heightLeft = scaledHeight;
-          let currentPositionOnImage = 0; // Tracks the y-position on the original canvas image
+          // let currentPositionOnImage = 0; // Tracks the y-position on the original canvas image
 
           // Add title to the PDF
           pdf.setFontSize(18);
@@ -120,8 +109,8 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
             const sourceRectHeight = pageContentHeight / ratio; // height of the slice from original canvas
 
             pdf.addImage(
-              imgData, 
-              'PNG', 
+              imgData,
+              'PNG',
               15, // x margin
               heightLeft === scaledHeight ? y : 20, // y position on PDF page
               scaledWidth - 30, // width on PDF page (with margins)
@@ -132,7 +121,7 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
               0, // x in original image (always 0 for full width slice)
               positionOnCanvas // y in original image
             );
-            
+
             heightLeft -= pageContentHeight;
             positionOnCanvas += sourceRectHeight;
 
@@ -140,7 +129,7 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
               pdf.addPage();
             }
           }
-          
+
           pdf.save('validation-report.pdf');
         })
         .catch(err => {
@@ -148,7 +137,7 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
         })
         .finally(() => {
           setIsGeneratingPdf(false);
-           iframes.forEach(iframe => iframe.style.visibility = ''); 
+           // iframes.forEach(iframe => iframe.style.visibility = '');
         });
     }
   };
@@ -169,14 +158,14 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
       </Card>
     );
   }
-  
+
   return (
     <div className="mt-8 space-y-6" >
       <div className="flex justify-between items-center" id="report-header-to-exclude">
         <h2 className="text-2xl font-semibold text-foreground">Validation Report</h2>
         {results.length > 0 && !results.some(r => r.status === 'pending' || r.status === 'validating') && (
-          <Button 
-            onClick={handleDownloadPdf} 
+          <Button
+            onClick={handleDownloadPdf}
             disabled={isGeneratingPdf}
             variant="outline"
             size="sm"
@@ -199,13 +188,15 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
         {results.map(result => {
           const previewWidth = result.adDimensions?.actual?.width || result.adDimensions?.width || 0;
           const previewHeight = result.adDimensions?.actual?.height || result.adDimensions?.height || 0;
+          const placeholderUrl = `https://placehold.co/${previewWidth || 300}x${previewHeight || 250}.png`;
+
 
           return (
             <Card key={result.id} className="shadow-lg overflow-hidden mb-6">
               <CardHeader className={`flex flex-row items-center justify-between space-y-0 pb-2 ${
                 result.status === 'success' ? 'bg-green-500/10' :
                 result.status === 'error' ? 'bg-destructive/10' :
-                result.status === 'warning' ? 'bg-accent/10' : 
+                result.status === 'warning' ? 'bg-accent/10' :
                 'bg-muted/30'
               }`}>
                 <div className="min-w-0">
@@ -217,15 +208,15 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
                   </CardDescription>
                 </div>
                 <Badge variant={
-                  result.status === 'success' ? 'default' : 
+                  result.status === 'success' ? 'default' :
                   result.status === 'error' ? 'destructive' :
-                  result.status === 'warning' ? 'default' : 
+                  result.status === 'warning' ? 'default' :
                   'secondary'
                 }
                 className={`py-1 px-3 text-sm ${
                     result.status === 'success' ? 'bg-green-600 text-white' :
                     result.status === 'error' ? 'bg-destructive text-destructive-foreground' :
-                    result.status === 'warning' ? 'bg-accent text-accent-foreground' : 
+                    result.status === 'warning' ? 'bg-accent text-accent-foreground' :
                     ''
                 }`}
                 >
@@ -241,7 +232,7 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
                       <div>
                         <p className="font-medium text-foreground">Ad Dimensions</p>
                         <p className="text-muted-foreground">
-                          {result.adDimensions.actual ? 
+                          {result.adDimensions.actual ?
                            `Detected: ${result.adDimensions.actual.width}x${result.adDimensions.actual.height}px ` : ''}
                            {(result.adDimensions.width && result.adDimensions.height && (!result.adDimensions.actual || (result.adDimensions.actual.width !== result.adDimensions.width || result.adDimensions.actual.height !== result.adDimensions.height))) ?
                            `(Expected: ${result.adDimensions.width}x${result.adDimensions.height}px)`: result.adDimensions.actual ? '' : 'Not specified'}
@@ -278,26 +269,14 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
                       <Eye className="w-4 h-4 mr-2 text-primary" /> Banner Preview:
                     </h4>
                     <div className="bg-secondary/30 p-3 rounded-md flex justify-center items-center overflow-hidden" style={{ width: '100%', maxWidth: `${previewWidth}px`, margin: '0 auto' }}>
-                      {result.htmlContent ? (
-                        <iframe
-                          title={`Banner Preview: ${result.fileName}`}
-                          srcDoc={result.htmlContent}
-                          width={previewWidth}
-                          height={previewHeight}
-                          sandbox="allow-scripts allow-same-origin allow-popups" 
-                          className="border rounded shadow-md bg-background"
-                          style={{border: '1px solid #ccc', display: 'block', transformOrigin: 'top left' }}
-                        />
-                      ) : (
-                        <img
-                          src={`https://placehold.co/${previewWidth}x${previewHeight}.png`}
+                       <Image
+                          src={placeholderUrl}
                           alt={`Banner Preview ${previewWidth}x${previewHeight}`}
                           width={previewWidth}
                           height={previewHeight}
                           className="max-w-full h-auto border rounded shadow-md bg-background"
                           data-ai-hint="advertisement banner"
                         />
-                      )}
                     </div>
                   </div>
                 )}
