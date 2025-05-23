@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useState, useEffect } from 'react';
@@ -22,29 +23,70 @@ const mockValidateFile = async (file: File): Promise<ValidationResult> => {
   await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 1500)); // Simulate network delay
 
   const issues: ValidationIssue[] = [];
-  let status: ValidationResult['status'] = 'success';
+  let status: ValidationResult['status'] = 'success'; // Assume success initially
   
-  // Mock common validation checks
+  // Simulate reading <meta name="ad.size" content="width=XXX,height=XXX">
+  let actualMetaWidth: number | undefined = undefined;
+  let actualMetaHeight: number | undefined = undefined;
+  const metaTagScenario = Math.random(); // Determines if/how meta tag is found
+
+  if (metaTagScenario < 0.85) { // 85% chance meta tag is "found" (could be valid or malformed)
+    if (Math.random() < 0.9) { // 90% of "found" tags are valid
+      // Simulate valid meta tag with some variation based on one of the expected dimensions
+      const baseDimIndex = Math.floor(Math.random() * MOCK_EXPECTED_DIMENSIONS.length);
+      const baseWidth = MOCK_EXPECTED_DIMENSIONS[baseDimIndex].width;
+      const baseHeight = MOCK_EXPECTED_DIMENSIONS[baseDimIndex].height;
+      // Allow for some small deviations, or sometimes make it match an expected dim, or be completely different
+      const deviationChance = Math.random();
+      if (deviationChance < 0.6) { // 60% chance it matches one of the expected sets, or is close
+        actualMetaWidth = baseWidth + Math.floor((Math.random() - 0.5) * 10); // +/- 5px
+        actualMetaHeight = baseHeight + Math.floor((Math.random() - 0.5) * 10); // +/- 5px
+      } else if (deviationChance < 0.8) { // 20% chance it matches exactly another expected dim
+         const anotherExpectedDim = MOCK_EXPECTED_DIMENSIONS[(baseDimIndex + 1) % MOCK_EXPECTED_DIMENSIONS.length];
+         actualMetaWidth = anotherExpectedDim.width;
+         actualMetaHeight = anotherExpectedDim.height;
+      } else { // 20% chance it's some other random dimension
+        actualMetaWidth = Math.floor(100 + Math.random() * 500); // e.g. 100-599
+        actualMetaHeight = Math.floor(50 + Math.random() * 300); // e.g. 50-349
+      }
+    } else {
+      // Simulate malformed meta tag
+      issues.push(createMockIssue('error', 'Invalid ad.size meta tag format.', 'Expected format: "width=XXX,height=XXX".'));
+      // actualMetaWidth and actualMetaHeight remain undefined
+    }
+  } else { // 15% chance meta tag is "not found"
+    issues.push(createMockIssue('error', 'Required ad.size meta tag not found in HTML.', 'Ensure <meta name="ad.size" content="width=XXX,height=XXX"> is present.'));
+    // actualMetaWidth and actualMetaHeight remain undefined
+  }
+
+  // Determine expected dimensions (e.g., from campaign settings for the ad slot)
+  // For mock, let's always pick one of the MOCK_EXPECTED_DIMENSIONS as the "expected" for this validation run.
+  const expectedDim = MOCK_EXPECTED_DIMENSIONS[Math.floor(Math.random() * MOCK_EXPECTED_DIMENSIONS.length)];
+
+  // Populate adDimensions for the report. This part should always run.
+  // It represents the expected dimensions for the slot, and what was detected from the creative.
+  const adDimensions: ValidationResult['adDimensions'] = {
+    width: expectedDim.width, // Expected width for the ad slot
+    height: expectedDim.height, // Expected height for the ad slot
+    actual: actualMetaWidth !== undefined && actualMetaHeight !== undefined 
+            ? { width: actualMetaWidth, height: actualMetaHeight } 
+            : undefined, // Actual dimensions detected from the creative's meta tag
+  };
+
+  // Check if actual detected dimensions (if any) match expected dimensions for the slot
+  if (adDimensions.actual) {
+    if (adDimensions.actual.width !== expectedDim.width || adDimensions.actual.height !== expectedDim.height) {
+      issues.push(createMockIssue('warning', `Detected dimensions ${adDimensions.actual.width}x${adDimensions.actual.height}px do not match expected slot dimensions ${expectedDim.width}x${expectedDim.height}px.`));
+    }
+  }
+  // Note: If adDimensions.actual is undefined, an error regarding the meta tag (missing or malformed) 
+  // would have already been added to the 'issues' array by the logic above.
+
+  // --- Existing mock checks (file size, clickTag, file structure) ---
   const isTooLarge = file.size > MOCK_MAX_FILE_SIZE;
   if (isTooLarge) {
     issues.push(createMockIssue('error', `File size exceeds limit (${(MOCK_MAX_FILE_SIZE / (1024*1024)).toFixed(1)}MB).`));
   }
-
-  // Simulate dimension check (randomly pick one or none)
-  let adDimensions: ValidationResult['adDimensions'] | undefined = undefined;
-  const dimensionScenario = Math.random();
-  if (dimensionScenario < 0.7) { // 70% chance to have dimension checks
-    const expectedDim = MOCK_EXPECTED_DIMENSIONS[Math.floor(Math.random() * MOCK_EXPECTED_DIMENSIONS.length)];
-    const actualDim = { // simulate detected dimensions
-        width: expectedDim.width + (Math.random() > 0.8 ? (Math.random() > 0.5 ? 10 : -10) : 0), 
-        height: expectedDim.height + (Math.random() > 0.8 ? (Math.random() > 0.5 ? 10 : -10) : 0)
-    };
-    adDimensions = { width: expectedDim.width, height: expectedDim.height, actual: actualDim };
-    if (actualDim.width !== expectedDim.width || actualDim.height !== expectedDim.height) {
-        issues.push(createMockIssue('warning', `Detected dimensions ${actualDim.width}x${actualDim.height}px do not match expected ${expectedDim.width}x${expectedDim.height}px.`));
-    }
-  }
-
 
   const hasClickTag = Math.random() > 0.3; // 70% chance of having clickTag
   if (!hasClickTag) {
@@ -56,11 +98,12 @@ const mockValidateFile = async (file: File): Promise<ValidationResult> => {
     issues.push(createMockIssue('error', 'Invalid file structure. Primary HTML file not found at root.'));
   }
   
-  if (Math.random() < 0.15 && issues.length === 0) { // 15% chance of a random warning if no errors
-     issues.push(createMockIssue('warning', 'Creative uses deprecated JavaScript features.', 'Consider updating to modern ES6+ syntax.'));
+  if (Math.random() < 0.10 && issues.length === 0) { // 10% chance of a random warning if no other issues
+     issues.push(createMockIssue('warning', 'Creative uses deprecated JavaScript features.', 'Consider updating to modern ES6+ syntax for better performance and compatibility.'));
   }
 
 
+  // --- Determine final status based on issues ---
   const hasErrors = issues.some(issue => issue.type === 'error');
   const hasWarnings = issues.some(issue => issue.type === 'warning');
 
@@ -72,10 +115,10 @@ const mockValidateFile = async (file: File): Promise<ValidationResult> => {
     status = 'success';
   }
   
-  // If success, but file is large (but not over limit), add a warning for optimization
-  if (status === 'success' && file.size > MOCK_MAX_FILE_SIZE * 0.8 && file.size <= MOCK_MAX_FILE_SIZE) {
-    issues.push(createMockIssue('warning', 'File size is large, consider optimizing assets.', `Current size: ${(file.size / (1024*1024)).toFixed(2)}MB.`));
-    status = 'warning';
+  // If no errors/warnings yet, but file is large (but not over limit), add a warning for optimization
+  if (status === 'success' && file.size > MOCK_MAX_FILE_SIZE * 0.75 && file.size <= MOCK_MAX_FILE_SIZE) {
+    issues.push(createMockIssue('warning', 'File size is large, consider optimizing assets for faster loading.', `Current size: ${(file.size / (1024*1024)).toFixed(2)}MB.`));
+    if (!hasErrors) status = 'warning'; // Ensure status becomes warning if it was success
   }
 
 
@@ -84,7 +127,7 @@ const mockValidateFile = async (file: File): Promise<ValidationResult> => {
     fileName: file.name,
     status,
     issues,
-    adDimensions,
+    adDimensions, // This is now always populated
     fileStructureOk: validFileStructure,
     clickTagFound: hasClickTag,
     fileSize: file.size,
@@ -118,32 +161,35 @@ export default function HomePage() {
       issues: [],
       fileSize: file.size,
       maxFileSize: MOCK_MAX_FILE_SIZE,
+      // adDimensions will be populated by mockValidateFile
     }));
     setValidationResults(initialResults);
 
-    const results: ValidationResult[] = [];
-    for (const file of selectedFiles) {
+    const resultsPromises = selectedFiles.map(file => mockValidateFile(file));
+    
+    // Process results as they come in for better UX
+    for (let i = 0; i < resultsPromises.length; i++) {
       try {
-        const result = await mockValidateFile(file);
-        results.push(result);
-        // Update results incrementally
-        setValidationResults(prevResults => prevResults.map(pr => pr.fileName === file.name ? result : pr));
+        const result = await resultsPromises[i];
+        setValidationResults(prevResults => 
+          prevResults.map(pr => pr.fileName === result.fileName && pr.status === 'validating' ? result : pr)
+        );
       } catch (error) {
-        console.error("Validation error for file:", file.name, error);
+        console.error("Validation error for file:", selectedFiles[i].name, error);
         const errorResult: ValidationResult = {
-          id: `${file.name}-${Date.now()}-error`,
-          fileName: file.name,
+          id: `${selectedFiles[i].name}-${Date.now()}-error`,
+          fileName: selectedFiles[i].name,
           status: 'error',
           issues: [createMockIssue('error', 'An unexpected error occurred during validation.')],
-          fileSize: file.size,
+          fileSize: selectedFiles[i].size,
+          adDimensions: MOCK_EXPECTED_DIMENSIONS.length > 0 ? { width: MOCK_EXPECTED_DIMENSIONS[0].width, height: MOCK_EXPECTED_DIMENSIONS[0].height } : undefined, // Basic fallback
         };
-        results.push(errorResult);
-        setValidationResults(prevResults => prevResults.map(pr => pr.fileName === file.name ? errorResult : pr));
+        setValidationResults(prevResults => 
+          prevResults.map(pr => pr.fileName === selectedFiles[i].name && pr.status === 'validating' ? errorResult : pr)
+        );
       }
     }
     
-    // Final update after all files are processed (optional, if incremental is good)
-    // setValidationResults(results);
     setIsLoading(false);
     toast({
       title: "Validation Complete",
@@ -155,21 +201,9 @@ export default function HomePage() {
   useEffect(() => {
     if (selectedFiles.length === 0) {
         setValidationResults([]);
-    } else {
-        // Optionally, keep results if some files remain, or clear always.
-        // For now, let's clear if the set of files is different.
-        // This logic could be refined to only remove results for files no longer selected.
-        // A simple approach: if selected files change, reset to "pending" or clear results.
-        const currentFileNames = new Set(selectedFiles.map(f => f.name));
-        const resultsToKeep = validationResults.filter(r => currentFileNames.has(r.fileName));
-        if(resultsToKeep.length !== validationResults.length || selectedFiles.length !== resultsToKeep.length) {
-          // If files were removed or added, and validation was already run, reset.
-          // Or, just keep relevant results. For now, a simple reset if selection changes much.
-          // This part can be complex, for now we'll clear results if the file list changes significantly
-          // or if files are removed after validation.
-          // A better UX might keep results for files that are still selected.
-        }
     }
+    // More sophisticated logic for preserving results for files that remain selected could be added here.
+    // For now, if file selection changes, running validation again will clear and repopulate.
   }, [selectedFiles]);
 
 
@@ -193,3 +227,5 @@ export default function HomePage() {
     </div>
   );
 }
+
+    
