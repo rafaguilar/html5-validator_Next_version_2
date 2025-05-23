@@ -1,11 +1,16 @@
 
 "use client";
 
+import type { ReactNode } from 'react';
+import React, { useRef, useState } from 'react';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 import type { ValidationResult, ValidationIssue, ClickTagInfo } from '@/types';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Badge } from '@/components/ui/badge';
-import { CheckCircle2, XCircle, AlertTriangle, FileText, Image as ImageIcon, Archive, ExternalLink, Info, LinkIcon } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { CheckCircle2, XCircle, AlertTriangle, FileText, Image as ImageIcon, Archive, ExternalLink, Info, LinkIcon, Download, Loader2 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
 interface ValidationResultsProps {
@@ -48,6 +53,74 @@ const formatBytes = (bytes: number, decimals = 2) => {
 
 
 export function ValidationResults({ results, isLoading }: ValidationResultsProps) {
+  const reportRef = useRef<HTMLDivElement>(null);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+
+  const handleDownloadPdf = () => {
+    const input = reportRef.current;
+    if (input && results.length > 0) {
+      setIsGeneratingPdf(true);
+      html2canvas(input, { 
+        scale: 2, // Increase scale for better resolution
+        useCORS: true, // If you have external images/assets
+        logging: false // Disable console logging from html2canvas
+      })
+        .then((canvas) => {
+          const imgData = canvas.toDataURL('image/png');
+          const pdf = new jsPDF({
+            orientation: 'portrait',
+            unit: 'pt',
+            format: 'a4',
+          });
+
+          const imgProps = pdf.getImageProperties(imgData);
+          const pdfWidth = pdf.internal.pageSize.getWidth();
+          const pdfHeight = pdf.internal.pageSize.getHeight();
+          
+          const canvasWidth = imgProps.width;
+          const canvasHeight = imgProps.height;
+
+          // Calculate the aspect ratio
+          const ratio = Math.min(pdfWidth / canvasWidth, pdfHeight / canvasHeight);
+          
+          const scaledWidth = canvasWidth * ratio;
+          const scaledHeight = canvasHeight * ratio;
+
+          // Calculate x and y to center the image (optional)
+          // const x = (pdfWidth - scaledWidth) / 2;
+          // const y = (pdfHeight - scaledHeight) / 2; 
+          // For reports, usually top alignment is better.
+          const x = (pdfWidth - scaledWidth) / 2; // Center horizontally
+          let y = 0; // Top alignment initially
+
+          // If the content is taller than one page, split it
+          const pageHeight = pdf.internal.pageSize.getHeight() - 40; // A bit of margin
+          let heightLeft = scaledHeight;
+          let position = 0;
+
+          pdf.addImage(imgData, 'PNG', x, y, scaledWidth, scaledHeight);
+          heightLeft -= pageHeight;
+
+          while (heightLeft > 0) {
+            position = heightLeft - scaledHeight; // negative
+            pdf.addPage();
+            pdf.addImage(imgData, 'PNG', x, position + y, scaledWidth, scaledHeight);
+            heightLeft -= pageHeight;
+          }
+          
+          pdf.save('validation-report.pdf');
+        })
+        .catch(err => {
+          console.error("Error generating PDF:", err);
+          // Optionally, show a toast message for the error
+        })
+        .finally(() => {
+          setIsGeneratingPdf(false);
+        });
+    }
+  };
+
+
   if (isLoading && results.length === 0) {
     return null;
   }
@@ -65,8 +138,30 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
   }
   
   return (
-    <div className="mt-8 space-y-6">
-      <h2 className="text-2xl font-semibold text-foreground">Validation Report</h2>
+    <div className="mt-8 space-y-6" ref={reportRef}>
+      <div className="flex justify-between items-center">
+        <h2 className="text-2xl font-semibold text-foreground">Validation Report</h2>
+        {results.length > 0 && !isLoading && (
+          <Button 
+            onClick={handleDownloadPdf} 
+            disabled={isGeneratingPdf}
+            variant="outline"
+            size="sm"
+          >
+            {isGeneratingPdf ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Generating PDF...
+              </>
+            ) : (
+              <>
+                <Download className="mr-2 h-4 w-4" />
+                Download PDF
+              </>
+            )}
+          </Button>
+        )}
+      </div>
       {results.map(result => (
         <Card key={result.id} className="shadow-lg overflow-hidden">
           <CardHeader className={`flex flex-row items-center justify-between space-y-0 pb-2 ${
