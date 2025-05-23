@@ -284,7 +284,7 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
                           srcDoc={result.htmlContent}
                           width={previewWidth}
                           height={previewHeight}
-                          sandbox="allow-scripts allow-same-origin" // Added allow-same-origin
+                          sandbox="allow-scripts allow-same-origin allow-popups" 
                           className="border rounded shadow-md bg-background"
                           style={{border: '1px solid #ccc', display: 'block', transformOrigin: 'top left' }}
                         />
