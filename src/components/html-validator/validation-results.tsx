@@ -314,6 +314,20 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
           )
         )}
       </div>
+      {results.length > 0 && !results.some(r => r.status === 'pending' || r.status === 'validating') && (
+        <div className="mt-8 pt-6 border-t border-border text-muted-foreground text-xs">
+          <h5 className="font-semibold text-sm mb-2 text-foreground">ClickTag Identification Limitations:</h5>
+          <p className="mb-1">Identification of clickTags via HTML parsing may fail for:</p>
+          <ul className="list-disc list-inside pl-4 space-y-0.5">
+            <li>Minified or obfuscated JavaScript.</li>
+            <li>ClickTag URLs constructed dynamically (e.g., from multiple variables).</li>
+            <li>More complex JavaScript assignment patterns.</li>
+            <li>ClickTags defined in ways other than simple variable assignments.</li>
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
+
+  
