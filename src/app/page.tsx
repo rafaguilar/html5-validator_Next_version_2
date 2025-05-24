@@ -1,7 +1,7 @@
 
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, ChangeEvent } from 'react';
 import JSZip from 'jszip';
 import { AppHeader } from '@/components/layout/header';
 import { FileUploader } from '@/components/html-validator/file-uploader';
@@ -29,7 +29,16 @@ const createMockIssue = (type: 'error' | 'warning', message: string, details?: s
 const extractHtmlContentFromZip = async (file: File): Promise<string | null> => {
   try {
     const zip = await JSZip.loadAsync(file);
-    let htmlFile = zip.file("index.html") || zip.file(/[^/]+\.html$/i)[0]; // index.html at root or first .html at root
+    // Prioritize index.html at root
+    let htmlFile = zip.file(/^index\.html$/i)?.[0] || zip.file(/^[^/]*index\.html$/i)?.[0];
+
+    if (!htmlFile) {
+      // If not found, try any .html file at the root
+      const rootHtmlFiles = zip.file(/^[^/]+\.html$/i);
+      if (rootHtmlFiles.length > 0) {
+        htmlFile = rootHtmlFiles[0];
+      }
+    }
     
     if (!htmlFile) { // If not found at root, search deeper
         const htmlFiles = zip.file(/\.html$/i); // Get all .html files
@@ -54,9 +63,11 @@ const findClickTagsInHtml = (htmlContent: string | null): ClickTagInfo[] => {
   if (!htmlContent) return [];
 
   const clickTags: ClickTagInfo[] = [];
-  // Regex to find clickTag assignments: var clickTag = "URL"; or var clickTagN = "URL";
-  // or window.clickTag = "URL"; Also handles single quotes and case-insensitivity for "clickTag".
-  const clickTagRegex = /(?:var|window\.)\s*([a-zA-Z0-9_]*clickTag[a-zA-Z0-9_]*)\s*=\s*["'](http[^"']+)["']/gi;
+  // Regex to find clickTag assignments:
+  // Supports var clickTag = "URL"; or var clickTagN = "URL"; or window.clickTag = "URL";
+  // Also supports let, const and assignments without var/let/const if at the start of a line or after ; , { (
+  // Handles single quotes and case-insensitivity for "clickTag".
+  const clickTagRegex = /(?:^|[\s;,\{\(])\s*(?:(?:var|let|const)\s+)?(?:window\.)?([a-zA-Z0-9_]*clickTag[a-zA-Z0-9_]*)\s*=\s*["'](http[^"']+)["']/gmi;
   
   let match;
   // First, find all script contents
@@ -69,8 +80,8 @@ const findClickTagsInHtml = (htmlContent: string | null): ClickTagInfo[] => {
 
   // Then, parse clickTags from the aggregated script content
   while ((match = clickTagRegex.exec(fullScriptContent)) !== null) {
-    const name = match[1];
-    const url = match[2];
+    const name = match[1]; // Capture group for the clickTag variable name
+    const url = match[2];  // Capture group for the URL
     clickTags.push({
       name,
       url,
@@ -86,12 +97,11 @@ const buildValidationResult = async (
   htmlContent: string | null, 
   detectedClickTagsFromParsing: ClickTagInfo[]
 ): Promise<Omit<ValidationResult, 'id' | 'fileName' | 'fileSize'>> => {
-  await new Promise(resolve => setTimeout(resolve, 100 + Math.random() * 200));
+  // Removed short delay, as actual parsing takes time
 
   const issues: ValidationIssue[] = [];
   let status: ValidationResult['status'] = 'success';
   
-  // Use the actually detected clickTags
   const detectedClickTags = detectedClickTagsFromParsing;
 
   if (detectedClickTags.length === 0) {
@@ -106,101 +116,71 @@ const buildValidationResult = async (
 
   let actualMetaWidth: number | undefined = undefined;
   let actualMetaHeight: number | undefined = undefined;
-  let simulatedMetaTagContentString: string | null = null;
+  let adSizeMetaTagContent: string | null = null;
 
-  let fileIntrinsicWidth: number | undefined;
-  let fileIntrinsicHeight: number | undefined;
+  let filenameIntrinsicWidth: number | undefined;
+  let filenameIntrinsicHeight: number | undefined;
   const filenameDimMatch = file.name.match(/_(\d+)x(\d+)(?:[^/]*)\.zip$/i);
 
   if (filenameDimMatch && filenameDimMatch[1] && filenameDimMatch[2]) {
-    fileIntrinsicWidth = parseInt(filenameDimMatch[1], 10);
-    fileIntrinsicHeight = parseInt(filenameDimMatch[2], 10);
-    simulatedMetaTagContentString = `width=${fileIntrinsicWidth},height=${fileIntrinsicHeight}`; // Simulate meta tag based on filename
-    const metaMatch = simulatedMetaTagContentString.match(/width=(\d+)[,;]?\s*height=(\d+)/i);
-      if (metaMatch && metaMatch[1] && metaMatch[2]) {
-        const wVal = parseInt(metaMatch[1], 10);
-        const hVal = parseInt(metaMatch[2], 10);
-        if (!isNaN(wVal) && !isNaN(hVal)) {
-          actualMetaWidth = wVal;
-          actualMetaHeight = hVal;
-        } else {
-           issues.push(createMockIssue('error', 'Invalid numeric values in ad.size meta tag (from filename).', `Parsed non-numeric values from: "${simulatedMetaTagContentString}"`));
-        }
-      } else {
-         issues.push(createMockIssue('error', 'Malformed ad.size meta tag content (from filename parsing).', `Content: "${simulatedMetaTagContentString}". Expected "width=XXX,height=YYY".`));
-      }
-  } else if (htmlContent) { // Try to parse from actual HTML if no filename dimensions
+    filenameIntrinsicWidth = parseInt(filenameDimMatch[1], 10);
+    filenameIntrinsicHeight = parseInt(filenameDimMatch[2], 10);
+  }
+  
+  if (htmlContent) {
     const metaTagRegex = /<meta\s+name=["']ad\.size["']\s+content=["']([^"']+)["'][^>]*>/i;
     const metaTagMatch = htmlContent.match(metaTagRegex);
     if (metaTagMatch && metaTagMatch[1]) {
-      simulatedMetaTagContentString = metaTagMatch[1];
-      const metaMatch = simulatedMetaTagContentString.match(/width=(\d+)[,;]?\s*height=(\d+)/i);
-      if (metaMatch && metaMatch[1] && metaMatch[2]) {
-        const wVal = parseInt(metaMatch[1], 10);
-        const hVal = parseInt(metaMatch[2], 10);
+      adSizeMetaTagContent = metaTagMatch[1];
+      const metaDimMatch = adSizeMetaTagContent.match(/width=(\d+)[,;]?\s*height=(\d+)/i);
+      if (metaDimMatch && metaDimMatch[1] && metaDimMatch[2]) {
+        const wVal = parseInt(metaDimMatch[1], 10);
+        const hVal = parseInt(metaDimMatch[2], 10);
         if (!isNaN(wVal) && !isNaN(hVal)) {
           actualMetaWidth = wVal;
           actualMetaHeight = hVal;
         } else {
-           issues.push(createMockIssue('error', 'Invalid numeric values in ad.size meta tag.', `Parsed non-numeric values from: "${simulatedMetaTagContentString}"`));
+           issues.push(createMockIssue('error', 'Invalid numeric values in ad.size meta tag.', `Parsed non-numeric values from: "${adSizeMetaTagContent}"`));
         }
       } else {
-         issues.push(createMockIssue('error', 'Malformed ad.size meta tag content.', `Content: "${simulatedMetaTagContentString}". Expected "width=XXX,height=YYY".`));
+         issues.push(createMockIssue('error', 'Malformed ad.size meta tag content.', `Content: "${adSizeMetaTagContent}". Expected "width=XXX,height=YYY".`));
       }
     } else {
-      issues.push(createMockIssue('error', 'Required ad.size meta tag not found in HTML.', 'Ensure <meta name="ad.size" content="width=XXX,height=XXX"> is present.'));
-    }
-  } else { // Fallback if no filename dimensions and no HTML content
-    const metaTagScenario = Math.random();
-    if (metaTagScenario < 0.05) { 
-      simulatedMetaTagContentString = null;
-      issues.push(createMockIssue('error', 'Required ad.size meta tag not found (simulated).', 'Ensure <meta name="ad.size" content="width=XXX,height=XXX"> is present.'));
-    } else if (metaTagScenario < 0.15) { 
-      const malformType = Math.random();
-      if (malformType < 0.25) simulatedMetaTagContentString = "width=300,height=BAD";
-      else if (malformType < 0.50) simulatedMetaTagContentString = "width=300";
-      else if (malformType < 0.75) simulatedMetaTagContentString = "height=250";
-      else simulatedMetaTagContentString = "size=300x250";
-      issues.push(createMockIssue('error', 'Invalid ad.size meta tag format (simulated).', `Meta tag content found: "${simulatedMetaTagContentString}". Expected format: "width=XXX,height=YYY".`));
-    } else { 
-      const chosenFallbackDim = POSSIBLE_FALLBACK_DIMENSIONS[Math.floor(Math.random() * POSSIBLE_FALLBACK_DIMENSIONS.length)];
-      simulatedMetaTagContentString = `width=${chosenFallbackDim.width},height=${chosenFallbackDim.height}`;
-      const metaMatch = simulatedMetaTagContentString.match(/width=(\d+)[,;]?\s*height=(\d+)/i);
-      if (metaMatch && metaMatch[1] && metaMatch[2]) {
-        const wVal = parseInt(metaMatch[1], 10);
-        const hVal = parseInt(metaMatch[2], 10);
-        if (!isNaN(wVal) && !isNaN(hVal)) {
-          actualMetaWidth = wVal;
-          actualMetaHeight = hVal;
-        } else {
-          issues.push(createMockIssue('error', 'Invalid numeric values in ad.size meta tag (simulated).', `Parsed non-numeric values from: "${simulatedMetaTagContentString}"`));
-        }
+      // If no meta tag in HTML, but dimensions are in filename, we can use those as "actual" for consistency.
+      if (filenameIntrinsicWidth !== undefined && filenameIntrinsicHeight !== undefined) {
+        actualMetaWidth = filenameIntrinsicWidth;
+        actualMetaHeight = filenameIntrinsicHeight;
+        issues.push(createMockIssue('warning', 'Required ad.size meta tag not found in HTML. Dimensions inferred from filename.', 'Ensure <meta name="ad.size" content="width=XXX,height=XXX"> is present.'));
       } else {
-         issues.push(createMockIssue('error', 'Malformed ad.size meta tag content (simulated fallback parsing).', `Content: "${simulatedMetaTagContentString}". Expected "width=XXX,height=YYY".`));
+        issues.push(createMockIssue('error', 'Required ad.size meta tag not found in HTML and no dimensions in filename.', 'Ensure <meta name="ad.size" content="width=XXX,height=XXX"> is present or include dimensions in filename like _WIDTHxHEIGHT.zip.'));
       }
+    }
+  } else { // No HTML content extracted
+    if (filenameIntrinsicWidth !== undefined && filenameIntrinsicHeight !== undefined) {
+      actualMetaWidth = filenameIntrinsicWidth;
+      actualMetaHeight = filenameIntrinsicHeight;
+      issues.push(createMockIssue('warning', 'Could not extract HTML. Dimensions inferred from filename.', 'Creative might be structured unusually or ZIP is empty/corrupt. Ad.size meta tag could not be verified.'));
+    } else {
+      issues.push(createMockIssue('error', 'Could not extract HTML and no dimensions in filename.', 'Unable to determine dimensions. Ad.size meta tag could not be verified.'));
     }
   }
   
-
   let expectedDim: { width: number; height: number };
   if (actualMetaWidth !== undefined && actualMetaHeight !== undefined) {
     expectedDim = { width: actualMetaWidth, height: actualMetaHeight };
-  } else if (fileIntrinsicWidth !== undefined && fileIntrinsicHeight !== undefined) {
-      expectedDim = { width: fileIntrinsicWidth, height: fileIntrinsicHeight };
-      if (!issues.some(iss => iss.message.includes("ad.size meta tag"))) { 
-        issues.push(createMockIssue('warning', 'Ad dimensions inferred from filename due to missing/invalid ad.size meta tag.'));
+  } else if (filenameIntrinsicWidth !== undefined && filenameIntrinsicHeight !== undefined) {
+      // This case is mostly covered by actualMetaWidth being set from filenameIntrinsicWidth if HTML parsing failed for meta tag
+      expectedDim = { width: filenameIntrinsicWidth, height: filenameIntrinsicHeight };
+      if (!issues.some(iss => iss.message.includes("ad.size meta tag") || iss.message.includes("Could not extract HTML"))) { 
+        issues.push(createMockIssue('warning', 'Ad dimensions inferred from filename due to missing/invalid ad.size meta tag or HTML extraction issues.'));
       }
-  } else if (POSSIBLE_FALLBACK_DIMENSIONS.length > 0) {
+  } else if (POSSIBLE_FALLBACK_DIMENSIONS.length > 0) { // Fallback if no meta tag, no filename dimension, and no HTML.
       const fallbackDim = POSSIBLE_FALLBACK_DIMENSIONS[Math.floor(Math.random() * POSSIBLE_FALLBACK_DIMENSIONS.length)];
       expectedDim = {width: fallbackDim.width, height: fallbackDim.height};
-      if (simulatedMetaTagContentString !== null && !issues.some(issue => issue.message.includes("ad.size meta tag"))) {
-         issues.push(createMockIssue('warning', `Ad dimensions are a fallback guess (${fallbackDim.width}x${fallbackDim.height}). Verify ad.size meta tag and filename conventions.`));
-      } else if (simulatedMetaTagContentString === null && !htmlContent) { // Only if HTML content wasn't available either
-         issues.push(createMockIssue('warning', `Dimensions defaulted to ${fallbackDim.width}x${fallbackDim.height} due to missing meta tag (or HTML parse error) and no dimensions in filename.`));
-      }
-  } else {
+      issues.push(createMockIssue('error', `Could not determine ad dimensions from meta tag or filename. Defaulted to a fallback guess: ${fallbackDim.width}x${fallbackDim.height}. Verify ad.size meta tag and filename conventions.`));
+  } else { // Absolute fallback
       expectedDim = { width: 300, height: 250 }; 
-      issues.push(createMockIssue('error', 'Could not determine ad dimensions. Ensure ad.size meta tag or filename convention is used.'));
+      issues.push(createMockIssue('error', 'Could not determine ad dimensions. Defaulted to 300x250. Ensure ad.size meta tag or filename convention is used.'));
   }
 
   const adDimensions: ValidationResult['adDimensions'] = {
@@ -216,11 +196,12 @@ const buildValidationResult = async (
     issues.push(createMockIssue('error', `File size exceeds limit (${(MOCK_MAX_FILE_SIZE / (1024*1024)).toFixed(1)}MB).`));
   }
 
-  const fileStructureOk = true; // Assume true for now, can be refined later
-
-  if (Math.random() < 0.10 && issues.length === 0 && !isTooLarge && !htmlContent) { // Only add if no html content
-     issues.push(createMockIssue('warning', 'Creative uses deprecated JavaScript features (simulated).', 'Consider updating to modern ES6+ syntax for better performance and compatibility.'));
+  // Simplified file structure check for now, as detailed zip inspection is complex client-side
+  const fileStructureOk = htmlContent ? true : false; 
+  if (!fileStructureOk && !issues.some(iss => iss.message.includes("Could not extract HTML"))) {
+    issues.push(createMockIssue('error', 'Invalid file structure. Primary HTML file could not be extracted.'));
   }
+
 
   const hasErrors = issues.some(issue => issue.type === 'error');
   const hasWarnings = issues.some(issue => issue.type === 'warning');
@@ -234,10 +215,11 @@ const buildValidationResult = async (
   }
 
   if (!isTooLarge && file.size > MOCK_MAX_FILE_SIZE * 0.75 && !hasErrors) {
+    // This might be redundant if actual size check reports error, but fine for mock
     issues.push(createMockIssue('warning', 'File size is large, consider optimizing assets for faster loading.', `Current size: ${(file.size / (1024*1024)).toFixed(2)}MB.`));
     if (status !== 'error') status = 'warning';
   }
-
+  
   return {
     status,
     issues,
@@ -245,7 +227,7 @@ const buildValidationResult = async (
     fileStructureOk,
     detectedClickTags: detectedClickTags.length > 0 ? detectedClickTags : undefined,
     maxFileSize: MOCK_MAX_FILE_SIZE,
-    htmlContent: htmlContent || undefined, // Include actual HTML content if extracted
+    htmlContent: htmlContent || undefined,
   };
 };
 
@@ -267,102 +249,67 @@ export default function HomePage() {
     }
 
     setIsLoading(true);
-    const initialResultsPromises = selectedFiles.map(async (file) => {
-      let initialWidth = 0;
-      let initialHeight = 0;
-      const filenameDimMatch = file.name.match(/_(\d+)x(\d+)(?:[^/]*)\.zip$/i);
-      if (filenameDimMatch && filenameDimMatch[1] && filenameDimMatch[2]) {
-        initialWidth = parseInt(filenameDimMatch[1], 10);
-        initialHeight = parseInt(filenameDimMatch[2], 10);
-      } else if (POSSIBLE_FALLBACK_DIMENSIONS.length > 0) {
-        const tempDim = POSSIBLE_FALLBACK_DIMENSIONS[Math.floor(Math.random() * POSSIBLE_FALLBACK_DIMENSIONS.length)];
-        initialWidth = tempDim.width;
-        initialHeight = tempDim.height;
-      }
-
-      return {
-        id: `${file.name}-${Date.now()}-pending-${Math.random()}`,
-        fileName: file.name,
-        status: 'validating' as ValidationResult['status'],
-        issues: [],
-        fileSize: file.size,
-        maxFileSize: MOCK_MAX_FILE_SIZE,
-        fileStructureOk: true, 
-        adDimensions: {
-          width: initialWidth,
-          height: initialHeight,
-          actual: undefined
-        },
-        detectedClickTags: undefined,
-        htmlContent: undefined,
-      };
-    });
-
-    const initialResults = await Promise.all(initialResultsPromises);
-    setValidationResults(initialResults);
-
-    const resultsPromises = selectedFiles.map(async (file, index) => {
-      const htmlContent = await extractHtmlContentFromZip(file);
-      const detectedClickTags = findClickTagsInHtml(htmlContent);
-      const validationResultPart = await buildValidationResult(file, htmlContent, detectedClickTags);
-      
-      const finalIssues = [...initialResults[index].issues, ...validationResultPart.issues];
-
-      let finalStatus = validationResultPart.status;
-      if (initialResults[index].status === 'error' || finalIssues.some(issue => issue.type === 'error')) {
-        finalStatus = 'error';
-      } else if (finalStatus !== 'error' && (initialResults[index].status === 'warning' || finalIssues.some(issue => issue.type === 'warning'))) {
-        finalStatus = 'warning';
-      }
-
-      return {
-        ...initialResults[index], 
-        ...validationResultPart, 
-        issues: finalIssues,
-        status: finalStatus,
-        htmlContent: htmlContent || undefined,
-      };
-    });
-
-    for (let i = 0; i < resultsPromises.length; i++) {
-      try {
-        const result = await resultsPromises[i];
-        setValidationResults(prevResults =>
-          prevResults.map(pr => pr.id === result.id ? result : pr)
-        );
-      } catch (error) {
-        let errorInitialWidth = 0;
-        let errorInitialHeight = 0;
-        const errorFilenameDimMatch = selectedFiles[i].name.match(/_(\d+)x(\d+)(?:[^/]*)\.zip$/i);
-        if (errorFilenameDimMatch && errorFilenameDimMatch[1] && errorFilenameDimMatch[2]) {
-            errorInitialWidth = parseInt(errorFilenameDimMatch[1], 10);
-            errorInitialHeight = parseInt(errorFilenameDimMatch[2], 10);
+    // Create initial "pending" results
+    const initialPendingResults: ValidationResult[] = selectedFiles.map(file => {
+        let initialWidth = 0;
+        let initialHeight = 0;
+        const filenameDimMatch = file.name.match(/_(\d+)x(\d+)(?:[^/]*)\.zip$/i);
+        if (filenameDimMatch && filenameDimMatch[1] && filenameDimMatch[2]) {
+            initialWidth = parseInt(filenameDimMatch[1], 10);
+            initialHeight = parseInt(filenameDimMatch[2], 10);
         } else if (POSSIBLE_FALLBACK_DIMENSIONS.length > 0) {
             const tempDim = POSSIBLE_FALLBACK_DIMENSIONS[Math.floor(Math.random() * POSSIBLE_FALLBACK_DIMENSIONS.length)];
-            errorInitialWidth = tempDim.width;
-            errorInitialHeight = tempDim.height;
+            initialWidth = tempDim.width;
+            initialHeight = tempDim.height;
         }
-
-        const errorResult: ValidationResult = {
-          id: `${selectedFiles[i].name}-${Date.now()}-error-${Math.random()}`,
-          fileName: selectedFiles[i].name,
-          status: 'error',
-          issues: [createMockIssue('error', 'An unexpected error occurred during validation process.', (error as Error).message)],
-          fileSize: selectedFiles[i].size,
-          maxFileSize: MOCK_MAX_FILE_SIZE,
-          fileStructureOk: false,
-           adDimensions: {
-            width: errorInitialWidth,
-            height: errorInitialHeight,
-            actual: undefined
-          },
-          htmlContent: undefined,
+        return {
+            id: `${file.name}-${Date.now()}-pending-${Math.random().toString(36).substring(2,9)}`,
+            fileName: file.name,
+            status: 'validating',
+            issues: [],
+            fileSize: file.size,
+            maxFileSize: MOCK_MAX_FILE_SIZE,
+            fileStructureOk: true, // Assume true initially
+            adDimensions: { width: initialWidth, height: initialHeight, actual: undefined },
+            detectedClickTags: undefined,
+            htmlContent: undefined,
         };
-        setValidationResults(prevResults =>
-          prevResults.map(pr => (pr.fileName === selectedFiles[i].name && (pr.status === 'validating' || pr.id.includes('-pending-'))) ? errorResult : pr)
-        );
+    });
+    setValidationResults(initialPendingResults);
+
+
+    const resultsPromises = selectedFiles.map(async (file, index) => {
+      const currentPendingResultId = initialPendingResults[index].id;
+      try {
+        const htmlContent = await extractHtmlContentFromZip(file);
+        const detectedClickTags = findClickTagsInHtml(htmlContent);
+        const validationResultPart = await buildValidationResult(file, htmlContent, detectedClickTags);
+        
+        return {
+          id: currentPendingResultId, // Keep the same ID to update the pending entry
+          fileName: file.name,
+          fileSize: file.size,
+          ...validationResultPart,
+        };
+      } catch (error) {
+        // Handle errors during individual file processing
+        const errorResult: ValidationResult = {
+            id: currentPendingResultId,
+            fileName: file.name,
+            status: 'error',
+            issues: [createMockIssue('error', 'An unexpected error occurred during validation process.', (error as Error).message)],
+            fileSize: file.size,
+            maxFileSize: MOCK_MAX_FILE_SIZE,
+            fileStructureOk: false,
+            adDimensions: initialPendingResults[index].adDimensions, // Keep initial guess
+            htmlContent: undefined,
+        };
+        return errorResult;
       }
-    }
+    });
+
+    const allResults = await Promise.all(resultsPromises);
+    setValidationResults(allResults);
 
     setIsLoading(false);
     toast({
@@ -398,3 +345,4 @@ export default function HomePage() {
     </div>
   );
 }
+
