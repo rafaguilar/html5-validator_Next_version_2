@@ -102,9 +102,19 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
         issues.push(createMockIssue('warning', 'Ad dimensions inferred from filename due to missing/invalid ad.size meta tag.'));
       }
   } else if (POSSIBLE_FALLBACK_DIMENSIONS.length > 0) {
-      expectedDim = POSSIBLE_FALLBACK_DIMENSIONS[Math.floor(Math.random() * POSSIBLE_FALLBACK_DIMENSIONS.length)];
-      if (!simulatedMetaTagContentString) { 
-        issues.push(createMockIssue('warning', 'Ad dimensions are a fallback guess. Verify ad.size meta tag and filename conventions.'));
+      // Fallback to a random dimension from the list if no other source is available
+      // This usually applies when filename has no dimensions AND meta tag was missing/malformed
+      const fallbackDim = POSSIBLE_FALLBACK_DIMENSIONS[Math.floor(Math.random() * POSSIBLE_FALLBACK_DIMENSIONS.length)];
+      expectedDim = {width: fallbackDim.width, height: fallbackDim.height};
+
+      // Add a warning only if the meta tag wasn't already flagged as missing/malformed.
+      // The previous logic for adding 'ad.size meta tag' errors ensures this doesn't double-report.
+      if (simulatedMetaTagContentString !== null && !issues.some(issue => issue.message.includes("ad.size meta tag"))) {
+         issues.push(createMockIssue('warning', `Ad dimensions are a fallback guess (${fallbackDim.width}x${fallbackDim.height}). Verify ad.size meta tag and filename conventions.`));
+      } else if (simulatedMetaTagContentString === null) {
+        // If meta tag was outright missing, the 'Required ad.size...' error already covers it.
+        // We might add a less severe note if filename also had no dims.
+         issues.push(createMockIssue('warning', `Dimensions defaulted to ${fallbackDim.width}x${fallbackDim.height} due to missing meta tag and no dimensions in filename.`));
       }
   } else {
       expectedDim = { width: 300, height: 250 }; // Ultimate fallback
@@ -126,22 +136,31 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
 
   // ClickTag Simulation
   const clickTagPresenceScenario = Math.random();
+  const numClickTagsToSimulate = Math.floor(Math.random() * 6); // 0 to 5 clickTags
 
-  if (clickTagPresenceScenario > 0.05) { // 95% chance clicktags are "found"
-    // Simulate the user's example case:
-    const exampleTags = [
-      { name: "clickTag", url: "https://www.symbravohcp.com" },
-      { name: "clickTag2", url: "http://www.axsome.com/symbravo-prescribing-information.pdf" },
-    ];
-    
-    for (const tagData of exampleTags) {
+  if (clickTagPresenceScenario > 0.05 && numClickTagsToSimulate > 0) { // 95% chance clicktags are "found" if numClickTagsToSimulate > 0
+    const baseUrls = ["www.example.com", "www.advertiser.net", "www.campaign-landing.org", "www.product-page.info", "www.partner-site.co"];
+    const pathSegments = ["details", "promo", "landing", "info", "productX", "serviceY"];
+
+    for (let i = 0; i < numClickTagsToSimulate; i++) {
+      const protocol = Math.random() < 0.7 ? 'http://' : 'https://'; // 70% chance of HTTP for testing warnings
+      const randomBaseUrl = baseUrls[Math.floor(Math.random() * baseUrls.length)];
+      const randomPath = pathSegments[Math.floor(Math.random() * pathSegments.length)];
+      const randomQuery = `param${i}=value${Math.floor(Math.random() * 100)}`;
+      
+      const clickTagName = i === 0 ? "clickTag" : `clickTag${i + 1}`;
+      const clickTagUrl = `${protocol}${randomBaseUrl}/${randomPath}?${randomQuery}`;
+
       detectedClickTags.push({
-        name: tagData.name,
-        url: tagData.url,
-        isHttps: tagData.url.startsWith('https://'), // Dynamically determine based on the URL string
+        name: clickTagName,
+        url: clickTagUrl,
+        isHttps: clickTagUrl.startsWith('https://'), // Dynamically determine based on the URL string
       });
     }
-  } else { // 5% chance missing clickTags
+  } else if (numClickTagsToSimulate === 0 && clickTagPresenceScenario > 0.05 ) {
+    // No clicktags to simulate, but no error either, just an empty array.
+  }
+  else { // 5% chance of explicitly simulating missing clickTags error
     issues.push(createMockIssue('error', 'Missing or invalid clickTag implementation.'));
   }
 
