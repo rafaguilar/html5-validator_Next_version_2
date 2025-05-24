@@ -22,6 +22,6 @@ export interface ValidationResult {
   detectedClickTags?: ClickTagInfo[];
   fileSize?: number; // in bytes
   maxFileSize?: number; // in bytes
-  htmlContent?: string; 
+  // htmlContent?: string; // This was for previews, not strictly needed for core validation of v1.1.0
 }
 

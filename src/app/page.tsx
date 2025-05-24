@@ -5,6 +5,7 @@ import type { ChangeEvent } from 'react';
 import React, { useState, useEffect } from 'react';
 import JSZip from 'jszip';
 import { HTMLHint, type LintResult, type RuleSet } from 'htmlhint';
+import * as csstree from 'csstree';
 import { AppHeader } from '@/components/layout/header';
 import { FileUploader } from '@/components/html-validator/file-uploader';
 import { ValidationResults } from '@/components/html-validator/validation-results';
@@ -140,14 +141,39 @@ const processCssContentAndCollectReferences = async (
   }
 };
 
+const lintCssContent = (cssText: string, filePath: string): ValidationIssue[] => {
+  const issues: ValidationIssue[] = [];
+  try {
+    csstree.parse(cssText);
+  } catch (error: any) {
+    if (error.name === 'SyntaxError' && error.message && error.line && error.column) {
+      issues.push(createIssue(
+        'error',
+        `CSS Syntax Error in '${filePath}': ${error.message}`,
+        `Line: ${error.line}, Column: ${error.column}`
+      ));
+    } else {
+       issues.push(createIssue(
+        'error',
+        `CSS Parsing Error in '${filePath}': An unexpected error occurred during CSS parsing.`,
+        error.message || 'Unknown error'
+      ));
+    }
+  }
+  return issues;
+};
+
+
 const analyzeCreativeAssets = async (file: File): Promise<{
   missingAssets: MissingAssetInfo[],
   unreferencedFiles: string[],
   foundHtmlPath?: string,
-  htmlContent?: string
+  htmlContent?: string,
+  cssLintIssues: ValidationIssue[],
 }> => {
   const missingAssets: MissingAssetInfo[] = [];
   const referencedAssetPaths = new Set<string>();
+  const cssLintIssues: ValidationIssue[] = [];
   let foundHtmlPath: string | undefined;
   let htmlContentForAnalysis: string | undefined;
   let zipBaseDir = '';
@@ -165,7 +191,7 @@ const analyzeCreativeAssets = async (file: File): Promise<{
             unreferencedDueToNoHtml.push(filePathInZip);
         }
       });
-      return { missingAssets, unreferencedFiles: unreferencedDueToNoHtml };
+      return { missingAssets, unreferencedFiles: unreferencedDueToNoHtml, cssLintIssues };
     }
     
     foundHtmlPath = htmlFile.path;
@@ -188,6 +214,7 @@ const analyzeCreativeAssets = async (file: File): Promise<{
           referencedAssetPaths.add(cssFilePath);
           processedCssPaths.add(cssFilePath);
           const cssContent = await zip.file(cssFilePath)!.async('string');
+          cssLintIssues.push(...lintCssContent(cssContent, cssFilePath));
           await processCssContentAndCollectReferences(cssContent, cssFilePath, zip, missingAssets, referencedAssetPaths);
         } else {
           missingAssets.push({ type: 'htmlLinkCss', path: href, referencedFrom: foundHtmlPath, originalSrc: href });
@@ -201,6 +228,7 @@ const analyzeCreativeAssets = async (file: File): Promise<{
       if (zip.file(potentialCssPath) && !processedCssPaths.has(potentialCssPath)) {
         referencedAssetPaths.add(potentialCssPath);
         const cssContent = await zip.file(potentialCssPath)!.async('string');
+        cssLintIssues.push(...lintCssContent(cssContent, potentialCssPath));
         await processCssContentAndCollectReferences(cssContent, potentialCssPath, zip, missingAssets, referencedAssetPaths);
         processedCssPaths.add(potentialCssPath);
       }
@@ -253,11 +281,11 @@ const analyzeCreativeAssets = async (file: File): Promise<{
         }
     });
     
-    return { missingAssets, unreferencedFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis };
+    return { missingAssets, unreferencedFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues };
 
   } catch (error) {
     console.error(`Error analyzing assets for ${file.name}:`, error);
-    return { missingAssets, unreferencedFiles: [], foundHtmlPath, htmlContent: htmlContentForAnalysis };
+    return { missingAssets, unreferencedFiles: [], foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues };
   }
 };
 
@@ -265,6 +293,7 @@ const findClickTagsInHtml = (htmlContent: string | null): ClickTagInfo[] => {
   if (!htmlContent) return [];
 
   const clickTags: ClickTagInfo[] = [];
+  // Updated regex to be more inclusive of various declaration patterns within script tags
   const clickTagRegex = /(?:^|[\s;,\{\(])\s*(?:(?:var|let|const)\s+)?(?:window\.)?([a-zA-Z0-9_]*clickTag[a-zA-Z0-9_]*)\s*=\s*["'](http[^"']+)["']/gmi;
   
   let match;
@@ -326,7 +355,8 @@ const buildValidationResult = async (
     missingAssets: MissingAssetInfo[],
     unreferencedFiles: string[],
     foundHtmlPath?: string, 
-    htmlContent?: string 
+    htmlContent?: string,
+    cssLintIssues: ValidationIssue[],
   }
 ): Promise<Omit<ValidationResult, 'id' | 'fileName' | 'fileSize'>> => {
   const issues: ValidationIssue[] = [];
@@ -367,6 +397,8 @@ const buildValidationResult = async (
   for (const unreferencedFilePath of analysis.unreferencedFiles) {
     issues.push(createIssue('warning', `Unreferenced file in ZIP: '${unreferencedFilePath}'.`, `Consider removing if not used to reduce file size.`));
   }
+  
+  issues.push(...analysis.cssLintIssues);
 
   if (analysis.htmlContent) {
     const lintingIssues = lintHtmlContent(analysis.htmlContent);
@@ -474,7 +506,6 @@ const buildValidationResult = async (
     fileStructureOk,
     detectedClickTags: detectedClickTags.length > 0 ? detectedClickTags : undefined,
     maxFileSize: MAX_FILE_SIZE,
-    htmlContent: analysis.htmlContent, 
   };
 };
 
@@ -518,7 +549,6 @@ export default function HomePage() {
             fileStructureOk: true, 
             adDimensions: { width: initialWidth, height: initialHeight, actual: undefined },
             detectedClickTags: undefined,
-            htmlContent: undefined, 
         };
     });
     setValidationResults(initialPendingResults);
@@ -546,7 +576,6 @@ export default function HomePage() {
             maxFileSize: MAX_FILE_SIZE,
             fileStructureOk: false,
             adDimensions: initialPendingResults[index].adDimensions,
-            htmlContent: undefined,
         };
         return errorResult;
       }
