@@ -46,10 +46,22 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
     fileIntrinsicHeight = parseInt(filenameDimMatch[2], 10);
     // If dimensions are in filename, assume meta tag is correct and reflects these
     simulatedMetaTagContentString = `width=${fileIntrinsicWidth},height=${fileIntrinsicHeight}`;
-    actualMetaWidth = fileIntrinsicWidth;
-    actualMetaHeight = fileIntrinsicHeight;
+    const metaMatch = simulatedMetaTagContentString.match(/width=(\d+)[,;]?\s*height=(\d+)/i);
+      if (metaMatch && metaMatch[1] && metaMatch[2]) {
+        const wVal = parseInt(metaMatch[1], 10);
+        const hVal = parseInt(metaMatch[2], 10);
+        if (!isNaN(wVal) && !isNaN(hVal)) {
+          actualMetaWidth = wVal;
+          actualMetaHeight = hVal;
+        } else {
+           issues.push(createMockIssue('error', 'Invalid numeric values in ad.size meta tag (from filename).', `Parsed non-numeric values from: "${simulatedMetaTagContentString}"`));
+        }
+      } else {
+         issues.push(createMockIssue('error', 'Malformed ad.size meta tag content (from filename parsing).', `Content: "${simulatedMetaTagContentString}". Expected "width=XXX,height=YYY".`));
+      }
+
   } else {
-    // If no dimensions in filename, simulate various meta tag states for files not matching the pattern
+    // If no dimensions in filename, simulate various meta tag states
     const metaTagScenario = Math.random();
     if (metaTagScenario < 0.05) { // 5% chance: meta tag missing
       simulatedMetaTagContentString = null;
@@ -86,11 +98,10 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
   } else if (fileIntrinsicWidth !== undefined && fileIntrinsicHeight !== undefined) {
       // This case might occur if meta tag was missing/malformed for a file with dimensions in name
       expectedDim = { width: fileIntrinsicWidth, height: fileIntrinsicHeight };
-      if (!issues.some(iss => iss.message.includes("ad.size meta tag"))) { // Only add warning if no meta tag issue already exists
+      if (!issues.some(iss => iss.message.includes("ad.size meta tag"))) { 
         issues.push(createMockIssue('warning', 'Ad dimensions inferred from filename due to missing/invalid ad.size meta tag.'));
       }
   } else if (POSSIBLE_FALLBACK_DIMENSIONS.length > 0) {
-      // This is for files without dims in name, AND meta tag was missing/malformed
       expectedDim = POSSIBLE_FALLBACK_DIMENSIONS[Math.floor(Math.random() * POSSIBLE_FALLBACK_DIMENSIONS.length)];
       if (!simulatedMetaTagContentString) { 
         issues.push(createMockIssue('warning', 'Ad dimensions are a fallback guess. Verify ad.size meta tag and filename conventions.'));
@@ -115,22 +126,21 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
 
   // ClickTag Simulation
   const clickTagPresenceScenario = Math.random();
-  if (clickTagPresenceScenario > 0.05) { // 95% chance clicktags are found to ensure this scenario is testable
-    // Directly simulate the user's example case:
-    // clickTag = "https://www.symbravohcp.com"
-    // clickTag2 = "http://www.axsome.com/symbravo-prescribing-information.pdf"
-    
-    detectedClickTags.push({
-      name: "clickTag",
-      url: "https://www.symbravohcp.com",
-      isHttps: true, // Explicitly set based on the URL
-    });
-    detectedClickTags.push({
-      name: "clickTag2",
-      url: "http://www.axsome.com/symbravo-prescribing-information.pdf",
-      isHttps: false, // Explicitly set based on the URL
-    });
 
+  if (clickTagPresenceScenario > 0.05) { // 95% chance clicktags are "found"
+    // Simulate the user's example case:
+    const exampleTags = [
+      { name: "clickTag", url: "https://www.symbravohcp.com" },
+      { name: "clickTag2", url: "http://www.axsome.com/symbravo-prescribing-information.pdf" },
+    ];
+    
+    for (const tagData of exampleTags) {
+      detectedClickTags.push({
+        name: tagData.name,
+        url: tagData.url,
+        isHttps: tagData.url.startsWith('https://'), // Dynamically determine based on the URL string
+      });
+    }
   } else { // 5% chance missing clickTags
     issues.push(createMockIssue('error', 'Missing or invalid clickTag implementation.'));
   }
@@ -142,7 +152,8 @@ const mockValidateFile = async (file: File): Promise<Omit<ValidationResult, 'id'
     }
   }
 
-  const fileStructureOk = true; // For v1.1.0, assume file structure is OK
+
+  const fileStructureOk = true; 
 
   if (Math.random() < 0.10 && issues.length === 0 && !isTooLarge) {
      issues.push(createMockIssue('warning', 'Creative uses deprecated JavaScript features.', 'Consider updating to modern ES6+ syntax for better performance and compatibility.'));
@@ -200,7 +211,6 @@ export default function HomePage() {
         initialWidth = parseInt(filenameDimMatch[1], 10);
         initialHeight = parseInt(filenameDimMatch[2], 10);
       } else if (POSSIBLE_FALLBACK_DIMENSIONS.length > 0) {
-        // This initial dimension is a guess, will be refined by mockValidateFile
         const tempDim = POSSIBLE_FALLBACK_DIMENSIONS[Math.floor(Math.random() * POSSIBLE_FALLBACK_DIMENSIONS.length)];
         initialWidth = tempDim.width;
         initialHeight = tempDim.height;
@@ -214,7 +224,7 @@ export default function HomePage() {
         issues: [],
         fileSize: file.size,
         maxFileSize: MOCK_MAX_FILE_SIZE,
-        fileStructureOk: true, // Assumed true initially
+        fileStructureOk: true, 
         adDimensions: {
           width: initialWidth,
           height: initialHeight,
@@ -229,11 +239,9 @@ export default function HomePage() {
     const resultsPromises = selectedFiles.map(async (file, index) => {
       const mockResultPart = await mockValidateFile(file);
       
-      // Combine issues, ensuring no duplicates if any were added in initial phase (though unlikely here)
       const finalIssues = [...initialResults[index].issues, ...mockResultPart.issues];
 
       let finalStatus = mockResultPart.status;
-      // Ensure status reflects any errors from initial stage if it existed, or if mock added errors
       if (initialResults[index].status === 'error' || finalIssues.some(issue => issue.type === 'error')) {
         finalStatus = 'error';
       } else if (finalStatus !== 'error' && (initialResults[index].status === 'warning' || finalIssues.some(issue => issue.type === 'warning'))) {
@@ -242,14 +250,13 @@ export default function HomePage() {
 
 
       return {
-        ...initialResults[index], // Keep id, fileName, fileSize from initial
-        ...mockResultPart, // Override with status, issues, adDimensions etc from mock
+        ...initialResults[index], 
+        ...mockResultPart, 
         issues: finalIssues,
         status: finalStatus,
       };
     });
 
-    // Process results sequentially to update UI one by one
     for (let i = 0; i < resultsPromises.length; i++) {
       try {
         const result = await resultsPromises[i];
@@ -284,7 +291,6 @@ export default function HomePage() {
           },
         };
         setValidationResults(prevResults =>
-          // Ensure we're updating the correct 'pending' result for this file
           prevResults.map(pr => (pr.fileName === selectedFiles[i].name && (pr.status === 'validating' || pr.id.includes('-pending-'))) ? errorResult : pr)
         );
       }
@@ -324,4 +330,3 @@ export default function HomePage() {
     </div>
   );
 }
-
