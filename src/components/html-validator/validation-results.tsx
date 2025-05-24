@@ -61,71 +61,130 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
     const input = reportRef.current;
     if (input && results.length > 0) {
       setIsGeneratingPdf(true);
+      // Ensure the element is fully visible and rendered for html2canvas
+      // For example, temporarily expand its container or scroll it into view if necessary.
+      // This example assumes 'input' (reportRef.current) is the complete element to capture.
+
       html2canvas(input, {
-        scale: 2,
+        scale: 2, // Higher scale can improve quality but increases canvas size
         useCORS: true,
-        logging: false,
-        allowTaint: true,
+        logging: false, // Set to true for html2canvas debugging
+        // Consider adding width/height if content overflows visually but not scroll-wise
+        // windowWidth: input.scrollWidth,
+        // windowHeight: input.scrollHeight,
       })
         .then((canvas) => {
-          const imgData = canvas.toDataURL('image/png');
           const pdf = new jsPDF({
             orientation: 'portrait',
             unit: 'pt',
             format: 'a4',
           });
 
-          const imgProps = pdf.getImageProperties(imgData);
-          const pdfWidth = pdf.internal.pageSize.getWidth();
+          const pdfPageWidth = pdf.internal.pageSize.getWidth();
+          const pdfPageHeight = pdf.internal.pageSize.getHeight();
 
-          const canvasWidth = imgProps.width;
-          const canvasHeight = imgProps.height;
+          const canvasOriginalWidth = canvas.width;
+          const canvasOriginalHeight = canvas.height;
 
-          const ratio = pdfWidth / canvasWidth;
-          const scaledWidth = canvasWidth * ratio;
-          const scaledHeight = canvasHeight * ratio;
+          const leftMargin = 30; 
+          const rightMargin = 30;
+          const topMargin = 40; 
+          const bottomMargin = 40;
 
-          let y = 20;
-          const pageHeightWithMargin = pdf.internal.pageSize.getHeight() - 40;
-          let heightLeft = scaledHeight;
-          
+          // Calculate the width the image will take on the PDF page
+          const imagePdfWidth = pdfPageWidth - leftMargin - rightMargin;
+          // Calculate the total height the image would span on the PDF if rendered continuously, maintaining aspect ratio
+          const imageTotalPdfHeight = (canvasOriginalHeight * imagePdfWidth) / canvasOriginalWidth;
+
+          let yPositionOnCanvas = 0; // Current Y position on the source canvas
+          let currentYOnPdf = topMargin; // Current Y position on the PDF page
+
+          // Add title to the first page
           pdf.setFontSize(18);
-          pdf.text("Validation Report", pdfWidth / 2, y + 10, { align: "center" });
-          y += 30;
+          pdf.text("Validation Report", pdfPageWidth / 2, currentYOnPdf, { align: "center" });
+          currentYOnPdf += 30; // Space after title
 
+          while (yPositionOnCanvas < canvasOriginalHeight) {
+            // Calculate available vertical space on the current PDF page
+            let spaceLeftOnPage = pdfPageHeight - currentYOnPdf - bottomMargin;
 
-          let positionOnCanvas = 0; 
+            if (spaceLeftOnPage <= 20) { // If very little space (e.g., less than 20pt), or if new page needed
+              pdf.addPage();
+              currentYOnPdf = topMargin; // Reset Y for the new page
+              spaceLeftOnPage = pdfPageHeight - topMargin - bottomMargin; // Full content height available
+            }
 
-          while (heightLeft > 0) {
-            const pageContentHeight = Math.min(pageHeightWithMargin - (heightLeft === scaledHeight ? y : 20) , heightLeft); 
-            const sourceRectHeight = pageContentHeight / ratio; 
+            // Determine the height of the current chunk on the PDF
+            // This is the minimum of the space left on the page, or the remaining total PDF height of the image
+            const remainingImageOverallPdfHeight = imageTotalPdfHeight * ((canvasOriginalHeight - yPositionOnCanvas) / canvasOriginalHeight);
+            const chunkPdfHeight = Math.min(spaceLeftOnPage, remainingImageOverallPdfHeight);
 
-            pdf.addImage(
-              imgData,
-              'PNG',
-              15, 
-              heightLeft === scaledHeight ? y : 20, 
-              scaledWidth - 30, 
-              pageContentHeight, 
-              undefined, 
-              'FAST', 
-              0, 
-              0, 
-              positionOnCanvas 
+            if (chunkPdfHeight <= 0.1) { // Threshold to prevent tiny or zero-height chunks
+                 if (yPositionOnCanvas < canvasOriginalHeight - 0.1 && (canvasOriginalHeight - yPositionOnCanvas) > 1 ) { // If significant canvas is left
+                    pdf.addPage();
+                    currentYOnPdf = topMargin;
+                    continue; // Restart logic for new page
+                }
+                break; // No more content to draw or space is too small
+            }
+
+            // Calculate the corresponding height on the source canvas for this chunk
+            // (chunkPdfHeight / imageTotalPdfHeight) is the fraction of total image this chunk represents
+            const chunkCanvasHeight = (chunkPdfHeight / imageTotalPdfHeight) * canvasOriginalHeight;
+            
+            // Ensure we don't try to read past the end of the canvas or create a malformed chunk
+            const safeChunkCanvasHeight = Math.max(0.1, Math.min(chunkCanvasHeight, canvasOriginalHeight - yPositionOnCanvas));
+
+             if (safeChunkCanvasHeight <= 0.1) {
+                 if(yPositionOnCanvas < canvasOriginalHeight - 0.1 && (canvasOriginalHeight - yPositionOnCanvas) > 1 ) {
+                    pdf.addPage();
+                    currentYOnPdf = topMargin;
+                    continue;
+                }
+                break;
+            }
+            
+            // Create a temporary canvas for the current chunk
+            const tempChunkCanvas = document.createElement('canvas');
+            tempChunkCanvas.width = canvasOriginalWidth;
+            tempChunkCanvas.height = safeChunkCanvasHeight;
+            const tempCtx = tempChunkCanvas.getContext('2d');
+
+            if (!tempCtx) {
+              console.error("Failed to get 2D context for tempChunkCanvas");
+              setIsGeneratingPdf(false);
+              return;
+            }
+
+            // Draw the segment from the main captured canvas to the temporary chunk canvas
+            tempCtx.drawImage(canvas,
+              0, yPositionOnCanvas,             // Source X, Y on main canvas
+              canvasOriginalWidth, safeChunkCanvasHeight, // Source W, H on main canvas
+              0, 0,                             // Destination X, Y on tempChunkCanvas
+              canvasOriginalWidth, safeChunkCanvasHeight // Destination W, H on tempChunkCanvas
             );
 
-            heightLeft -= pageContentHeight;
-            positionOnCanvas += sourceRectHeight;
+            const chunkDataUrl = tempChunkCanvas.toDataURL('image/png');
 
-            if (heightLeft > 0) {
-              pdf.addPage();
-            }
+            // Add the chunk image to the PDF
+            pdf.addImage(
+              chunkDataUrl,
+              'PNG',
+              leftMargin,       // X position on PDF page
+              currentYOnPdf,    // Y position on PDF page
+              imagePdfWidth,    // Width on PDF page (fixed to maintain aspect ratio with chunkPdfHeight)
+              chunkPdfHeight    // Height on PDF page (calculated to maintain aspect ratio of this chunk)
+            );
+
+            yPositionOnCanvas += safeChunkCanvasHeight; // Advance Y position on the source canvas
+            currentYOnPdf += chunkPdfHeight + 5; // Advance Y position on PDF, add small padding
           }
 
           pdf.save('validation-report.pdf');
         })
         .catch(err => {
           console.error("Error generating PDF:", err);
+          // Optionally, show a toast message to the user about the error
         })
         .finally(() => {
           setIsGeneratingPdf(false);
