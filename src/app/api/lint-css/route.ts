@@ -1,13 +1,14 @@
 
 'use server';
 
-import { NextRequest, NextResponse } from 'next/server';
+import type { NextRequest, NextResponse } from 'next/server';
 import stylelint from 'stylelint';
 // We are not importing stylelint-config-standard directly for now,
 // to test if a minimal, self-contained config works.
 import type { ValidationIssue } from '@/types';
 
 export async function POST(request: NextRequest) {
+  const lintIssues: ValidationIssue[] = [];
   try {
     const { code, codeFilename } = await request.json();
 
@@ -27,21 +28,19 @@ export async function POST(request: NextRequest) {
     const results = await stylelint.lint({
       code: code,
       codeFilename: codeFilename || 'temp.css', // Provide a default filename
-      config: minimalConfig, // Pass the hardcoded config
+      config: minimalConfig, 
     });
 
-    const lintIssues: ValidationIssue[] = [];
-
     if (results.results && results.results.length > 0) {
-      const fileResult = results.results[0]; // stylelint.lint with `code` option typically returns one result in the array
+      const fileResult = results.results[0]; 
       
-      // Handle parse errors from Stylelint (which might come from PostCSS)
       if (fileResult.parseErrors && fileResult.parseErrors.length > 0) {
-        fileResult.parseErrors.forEach((parseError: any) => { // Using 'any' as the exact type from stylelint might vary or not be well-defined in @types
+        fileResult.parseErrors.forEach((parseError: any) => { 
           let errMsg = 'Unknown CSS parse error';
-          if (parseError.text) errMsg = parseError.text; // PostCSS errors often use 'text'
-          else if (parseError.reason) errMsg = parseError.reason;
-          else if (parseError.message) errMsg = parseError.message;
+          // PostCSS CssSyntaxError objects often have a 'reason' property
+          if (parseError.reason) errMsg = parseError.reason;
+          else if (parseError.text) errMsg = parseError.text; // Some wrapped errors might use 'text'
+          else if (parseError.message) errMsg = parseError.message; // Generic fallback
           
           lintIssues.push({
             id: `css-parse-${Math.random().toString(36).substring(2, 9)}`,
@@ -49,24 +48,34 @@ export async function POST(request: NextRequest) {
             message: `CSS Parse Error: ${errMsg}`,
             line: parseError.line,
             column: parseError.column,
-            rule: parseError.ruleName || 'css-syntax-error', // parseError might have ruleName or similar
+            rule: 'css-syntax-error', 
           });
         });
       }
 
-      // Handle lint warnings/errors
       fileResult.warnings.forEach(warning => {
+        let message = warning.text;
+        // If Stylelint wraps a PostCSS CssSyntaxError, warning.rule is 'CssSyntaxError'
+        // and warning.text often contains the rule name in parentheses.
+        // Example: "Unclosed block (CssSyntaxError)" or "Missing semicolon (CssSyntaxError)"
+        // We want to keep the core message, e.g., "Unclosed block" or "Missing semicolon".
+        if (warning.rule === 'CssSyntaxError' && message.endsWith(` (${warning.rule})`)) {
+          message = message.substring(0, message.length - ` (${warning.rule})`.length);
+        } else if (message.includes(`(${warning.rule})`)) {
+          // For other rules, remove the rule name from the message if present
+           message = message.replace(` (${warning.rule})`, '');
+        }
+
         lintIssues.push({
           id: `css-lint-${warning.line}-${warning.column}-${warning.rule || 'unknown'}`,
           type: warning.severity === 'error' ? 'error' : 'warning',
-          message: warning.text.replace(` (${warning.rule})`, ''), // Remove rule from message if present
+          message: message, 
           line: warning.line,
           column: warning.column,
           rule: warning.rule,
         });
       });
     } else if (results.errored && (!results.results || results.results.length === 0)) {
-      // This case handles global errors not tied to a specific file result structure
       lintIssues.push({
         id: `css-global-error-${Math.random().toString(36).substring(2, 9)}`,
         type: 'error',
@@ -76,13 +85,37 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json({ issues: lintIssues });
+
   } catch (error: any) {
-    console.error('Critical error in /api/lint-css POST handler:', error); // Full error for server logs
+    console.error('Critical error in /api/lint-css POST handler:', error);
+    // Check if the error is a PostCSS CssSyntaxError
+    if (error.name === 'CssSyntaxError' && error.reason && error.line && error.column) {
+      lintIssues.push({
+        id: `css-postcss-exception-${Math.random().toString(36).substring(2, 9)}`,
+        type: 'error',
+        message: `CSS Syntax Error: ${error.reason}`, // Use error.reason directly
+        line: error.line,
+        column: error.column,
+        rule: 'css-syntax-error', // Standardize rule name for these
+      });
+      // Return the identified syntax error instead of a generic server error
+      return NextResponse.json({ issues: lintIssues }, { status: 200 }); // Still a 200 as the API call itself succeeded
+    }
+
+    // For other types of critical errors, return a generic server error message
     let detailMessage = 'An unexpected error occurred on the server.';
     if (error.message) {
       detailMessage = error.message;
     }
-    // Avoid sending potentially large/sensitive stack traces to client
-    return NextResponse.json({ error: 'Failed to lint CSS due to a server-side issue.', details: detailMessage }, { status: 500 });
+    
+    // Ensure we return the standard error structure even for unhandled exceptions
+    const criticalErrorIssue: ValidationIssue = {
+        id: `css-critical-server-error-${Math.random().toString(36).substring(2, 9)}`,
+        type: 'error',
+        message: 'Failed to lint CSS due to a server-side exception.',
+        details: detailMessage,
+        rule: 'stylelint-server-exception',
+    };
+    return NextResponse.json({ issues: [criticalErrorIssue] }, { status: 500 });
   }
 }
