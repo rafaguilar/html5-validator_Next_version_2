@@ -13,7 +13,8 @@ export async function POST(request: NextRequest) {
     const { code, codeFilename } = await request.json();
 
     if (!code || typeof code !== 'string') {
-      return NextResponse.json({ error: 'CSS code string is required.' }, { status: 400 });
+      // This case should ideally be caught by client-side validation first
+      return new Response(JSON.stringify({ error: 'CSS code string is required.' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
     }
     
     // Using a minimal, hardcoded config to avoid dynamic require issues from config loading.
@@ -25,11 +26,44 @@ export async function POST(request: NextRequest) {
       },
     };
 
-    const results = await stylelint.lint({
-      code: code,
-      codeFilename: codeFilename || 'temp.css', // Provide a default filename
-      config: minimalConfig, 
-    });
+    let results;
+    try {
+      results = await stylelint.lint({
+        code: code,
+        codeFilename: codeFilename || 'temp.css', // Provide a default filename
+        config: minimalConfig, 
+      });
+    } catch (lintError: any) {
+      // This catch block is for critical errors during stylelint.lint() itself,
+      // often very malformed CSS that PostCSS (stylelint's parser) can't handle.
+      console.error(`Stylelint.lint() execution error for ${codeFilename}:`, lintError);
+      let errMsg = 'A critical error occurred during CSS linting.';
+      let errLine: number | undefined;
+      let errCol: number | undefined;
+      let errRule = 'stylelint-execution-error';
+
+      if (lintError.name === 'CssSyntaxError' && lintError.reason) {
+        errMsg = `CSS Syntax Error: ${lintError.reason}`;
+        errLine = lintError.line;
+        errCol = lintError.column;
+        errRule = 'css-syntax-error'; // Standardize rule name for these
+      } else if (lintError.message) {
+        errMsg = lintError.message;
+      }
+      
+      lintIssues.push({
+        id: `css-critical-lint-error-${Math.random().toString(36).substring(2, 9)}`,
+        type: 'error',
+        message: errMsg,
+        line: errLine,
+        column: errCol,
+        rule: errRule,
+        details: lintError.stack, // Include stack for more debug info if needed
+      });
+      // Even with a critical lint error, return a 200 OK with the issues found
+      return new Response(JSON.stringify({ issues: lintIssues }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+
 
     if (results.results && results.results.length > 0) {
       const fileResult = results.results[0]; 
@@ -76,46 +110,31 @@ export async function POST(request: NextRequest) {
         });
       });
     } else if (results.errored && (!results.results || results.results.length === 0)) {
+      // This case handles scenarios where stylelint signals an error but doesn't provide specific results.
+      // For example, if the input code is empty or fundamentally unprocessable in a way not caught by parseErrors.
       lintIssues.push({
         id: `css-global-error-${Math.random().toString(36).substring(2, 9)}`,
         type: 'error',
-        message: results.output || 'A global Stylelint error occurred during processing.',
+        message: results.output || 'A global Stylelint error occurred during processing. The input CSS might be empty or critically malformed.',
         rule: 'stylelint-global',
       });
     }
 
-    return NextResponse.json({ issues: lintIssues });
+    return new Response(JSON.stringify({ issues: lintIssues }), { status: 200, headers: { 'Content-Type': 'application/json' } });
 
   } catch (error: any) {
+    // This is the outermost catch, for truly unexpected server errors in the API handler itself.
     console.error('Critical error in /api/lint-css POST handler:', error);
-    // Check if the error is a PostCSS CssSyntaxError
-    if (error.name === 'CssSyntaxError' && error.reason && error.line && error.column) {
-      lintIssues.push({
-        id: `css-postcss-exception-${Math.random().toString(36).substring(2, 9)}`,
-        type: 'error',
-        message: `CSS Syntax Error: ${error.reason}`, // Use error.reason directly
-        line: error.line,
-        column: error.column,
-        rule: 'css-syntax-error', // Standardize rule name for these
-      });
-      // Return the identified syntax error instead of a generic server error
-      return NextResponse.json({ issues: lintIssues }, { status: 200 }); // Still a 200 as the API call itself succeeded
-    }
-
-    // For other types of critical errors, return a generic server error message
-    let detailMessage = 'An unexpected error occurred on the server.';
-    if (error.message) {
-      detailMessage = error.message;
-    }
     
-    // Ensure we return the standard error structure even for unhandled exceptions
     const criticalErrorIssue: ValidationIssue = {
         id: `css-critical-server-error-${Math.random().toString(36).substring(2, 9)}`,
         type: 'error',
         message: 'Failed to lint CSS due to a server-side exception.',
-        details: detailMessage,
+        details: error.message || 'An unknown server error occurred.',
         rule: 'stylelint-server-exception',
     };
-    return NextResponse.json({ issues: [criticalErrorIssue] }, { status: 500 });
+    // Return a 500, but still try to make it JSON for the client.
+    return new Response(JSON.stringify({ issues: [criticalErrorIssue] }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }
-}
+
+    
