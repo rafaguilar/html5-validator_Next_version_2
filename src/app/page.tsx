@@ -5,7 +5,6 @@ import type { ChangeEvent } from 'react';
 import React, { useState, useEffect } from 'react';
 import JSZip from 'jszip';
 import { HTMLHint, type LintResult, type RuleSet } from 'htmlhint';
-// import * as csstree from 'csstree'; // Removed csstree import
 import { AppHeader } from '@/components/layout/header';
 import { FileUploader } from '@/components/html-validator/file-uploader';
 import { ValidationResults } from '@/components/html-validator/validation-results';
@@ -58,10 +57,13 @@ const resolveAssetPathInZip = (assetPath: string, baseFilePath: string, zip: JSZ
 
   if (zip.file(resolvedPath)) {
     return resolvedPath;
-  } else {
-    // console.warn(`[resolveAssetPathInZip] WARN: Could not resolve asset path "${assetPath}" from base "${baseFilePath}". Tried "${resolvedPath}". File exists? ${!!zip.file(resolvedPath)}`);
-    return null;
   }
+  // Try resolving from absolute path within zip if baseFilePath was deep
+  if (zip.file(assetPath) && !assetPath.includes('/')) { // if assetPath is simple like "img.png"
+    return assetPath;
+  }
+  // console.warn(`[resolveAssetPathInZip] WARN: Could not resolve asset path "${assetPath}" from base "${baseFilePath}". Tried "${resolvedPath}". File exists? ${!!zip.file(resolvedPath)}`);
+  return null;
 };
 
 const findHtmlFileInZip = async (zip: JSZip): Promise<{ path: string, content: string } | null> => {
@@ -108,6 +110,44 @@ const findHtmlFileInZip = async (zip: JSZip): Promise<{ path: string, content: s
   return null;
 };
 
+async function lintCssContent(cssText: string, filePath: string): Promise<ValidationIssue[]> {
+  try {
+    const response = await fetch('/api/lint-css', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ code: cssText, codeFilename: filePath }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      console.error(`CSS linting API error for ${filePath}: ${response.statusText}`, errorData.details || '');
+      return [
+        createIssue(
+          'error',
+          `CSS linting service failed for ${filePath}. Status: ${response.statusText}`,
+          errorData.details || 'Could not retrieve error details from API.'
+        ),
+      ];
+    }
+
+    const data = await response.json();
+    if (data.issues && Array.isArray(data.issues)) {
+      return data.issues.map((issue: any) => createIssue(
+        issue.type,
+        issue.message,
+        `Line: ${issue.line}, Col: ${issue.column}, Rule: ${issue.rule}`
+      ));
+    }
+    return [];
+  } catch (error: any) {
+    console.error(`Error calling CSS linting API for ${filePath}:`, error);
+    return [createIssue('error', `Failed to lint CSS for ${filePath} due to a network or client-side error.`, error.message)];
+  }
+}
+
+
 const processCssContentAndCollectReferences = async (
   cssContent: string,
   cssFilePath: string,
@@ -141,20 +181,16 @@ const processCssContentAndCollectReferences = async (
   }
 };
 
-// Removed lintCssContent function as csstree import is problematic
-// const lintCssContent = (cssText: string, filePath: string): ValidationIssue[] => { ... }
-
-
 const analyzeCreativeAssets = async (file: File): Promise<{
   missingAssets: MissingAssetInfo[],
   unreferencedFiles: string[],
   foundHtmlPath?: string,
   htmlContent?: string,
-  // cssLintIssues: ValidationIssue[], // Removed cssLintIssues
+  cssLintIssues: ValidationIssue[],
 }> => {
   const missingAssets: MissingAssetInfo[] = [];
   const referencedAssetPaths = new Set<string>();
-  // const cssLintIssues: ValidationIssue[] = []; // Removed cssLintIssues
+  const cssLintIssues: ValidationIssue[] = [];
   let foundHtmlPath: string | undefined;
   let htmlContentForAnalysis: string | undefined;
   let zipBaseDir = '';
@@ -172,7 +208,7 @@ const analyzeCreativeAssets = async (file: File): Promise<{
             unreferencedDueToNoHtml.push(filePathInZip);
         }
       });
-      return { missingAssets, unreferencedFiles: unreferencedDueToNoHtml, foundHtmlPath, htmlContent: htmlContentForAnalysis }; // Removed cssLintIssues
+      return { missingAssets, unreferencedFiles: unreferencedDueToNoHtml, foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues };
     }
 
     foundHtmlPath = htmlFile.path;
@@ -195,7 +231,7 @@ const analyzeCreativeAssets = async (file: File): Promise<{
           referencedAssetPaths.add(cssFilePath);
           processedCssPaths.add(cssFilePath);
           const cssContent = await zip.file(cssFilePath)!.async('string');
-          // cssLintIssues.push(...lintCssContent(cssContent, cssFilePath)); // Removed call to lintCssContent
+          cssLintIssues.push(...await lintCssContent(cssContent, cssFilePath));
           await processCssContentAndCollectReferences(cssContent, cssFilePath, zip, missingAssets, referencedAssetPaths);
         } else {
           missingAssets.push({ type: 'htmlLinkCss', path: href, referencedFrom: foundHtmlPath, originalSrc: href });
@@ -209,7 +245,7 @@ const analyzeCreativeAssets = async (file: File): Promise<{
       if (zip.file(potentialCssPath) && !processedCssPaths.has(potentialCssPath)) {
         referencedAssetPaths.add(potentialCssPath);
         const cssContent = await zip.file(potentialCssPath)!.async('string');
-        // cssLintIssues.push(...lintCssContent(cssContent, potentialCssPath)); // Removed call to lintCssContent
+        cssLintIssues.push(...await lintCssContent(cssContent, potentialCssPath));
         await processCssContentAndCollectReferences(cssContent, potentialCssPath, zip, missingAssets, referencedAssetPaths);
         processedCssPaths.add(potentialCssPath);
       }
@@ -262,11 +298,11 @@ const analyzeCreativeAssets = async (file: File): Promise<{
         }
     });
 
-    return { missingAssets, unreferencedFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis }; // Removed cssLintIssues
+    return { missingAssets, unreferencedFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues };
 
   } catch (error) {
     console.error(`Error analyzing assets for ${file.name}:`, error);
-    return { missingAssets, unreferencedFiles: [], foundHtmlPath, htmlContent: htmlContentForAnalysis }; // Removed cssLintIssues
+    return { missingAssets, unreferencedFiles: [], foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues };
   }
 };
 
@@ -274,16 +310,18 @@ const findClickTagsInHtml = (htmlContent: string | null): ClickTagInfo[] => {
   if (!htmlContent) return [];
 
   const clickTags: ClickTagInfo[] = [];
+  // Regex updated to better capture various clickTag declarations including those not starting with 'var'
   const clickTagRegex = /(?:^|[\s;,\{\(])\s*(?:(?:var|let|const)\s+)?(?:window\.)?([a-zA-Z0-9_]*clickTag[a-zA-Z0-9_]*)\s*=\s*["'](http[^"']+)["']/gmi;
 
   let match;
+  // Extract all script content first to avoid issues with HTML comments or structure interfering with regex on the whole document
   const scriptContentRegex = /<script[^>]*>([\s\S]*?)<\/script>/gi;
   let scriptMatch;
   let fullScriptContent = "";
   while ((scriptMatch = scriptContentRegex.exec(htmlContent)) !== null) {
-    fullScriptContent += scriptMatch[1] + "\n";
+    fullScriptContent += scriptMatch[1] + "\n"; // Add newline to separate script blocks
   }
-
+  
   while ((match = clickTagRegex.exec(fullScriptContent)) !== null) {
     const name = match[1];
     const url = match[2];
@@ -303,20 +341,20 @@ const lintHtmlContent = (htmlString: string): ValidationIssue[] => {
     'tag-pair': true,
     'attr-lowercase': true,
     'attr-value-double-quotes': true,
-    'doctype-first': false,
+    'doctype-first': false, // Often not present or strictly needed for ad snippets
     'spec-char-escape': true,
     'id-unique': true,
     'src-not-empty': true,
-    'tag-self-close': false,
+    'tag-self-close': false, // HTML5 doesn't require self-closing for void elements like <img>
     'img-alt-require': true,
-    'head-script-disabled': false,
-    'style-disabled': false,
+    'head-script-disabled': false, // Scripts in head are common in ads
+    'style-disabled': false, // Inline styles or <style> tags are common
   };
 
   const messages = HTMLHint.verify(htmlString, ruleset);
   return messages.map((msg: LintResult) => {
-    let issueType: 'error' | 'warning' = 'warning';
-    if (msg.type === 'error') {
+    let issueType: 'error' | 'warning' = 'warning'; // Default to warning
+    if (msg.type === 'error') { // HTMLHint types are 'error', 'warning', 'info'
       issueType = 'error';
     }
     return createIssue(
@@ -334,7 +372,7 @@ const buildValidationResult = async (
     unreferencedFiles: string[],
     foundHtmlPath?: string,
     htmlContent?: string,
-    // cssLintIssues: ValidationIssue[], // Removed cssLintIssues
+    cssLintIssues: ValidationIssue[],
   }
 ): Promise<Omit<ValidationResult, 'id' | 'fileName' | 'fileSize'>> => {
   const issues: ValidationIssue[] = [];
@@ -346,7 +384,7 @@ const buildValidationResult = async (
 
   const detectedClickTags = findClickTagsInHtml(analysis.htmlContent || null);
 
-  if (detectedClickTags.length === 0 && analysis.htmlContent) {
+  if (detectedClickTags.length === 0 && analysis.htmlContent) { // Only error if HTML was found but no clicktags
      issues.push(createIssue('error', 'No clickTags found or clickTag implementation is missing/invalid.'));
   } else {
     for (const tag of detectedClickTags) {
@@ -376,7 +414,7 @@ const buildValidationResult = async (
     issues.push(createIssue('warning', `Unreferenced file in ZIP: '${unreferencedFilePath}'.`, `Consider removing if not used to reduce file size.`));
   }
 
-  // issues.push(...analysis.cssLintIssues); // Removed cssLintIssues
+  issues.push(...analysis.cssLintIssues);
 
   if (analysis.htmlContent) {
     const lintingIssues = lintHtmlContent(analysis.htmlContent);
