@@ -1,7 +1,7 @@
 
 'use server';
 
-import type { NextRequest, NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
 import stylelint from 'stylelint';
 // We are not importing stylelint-config-standard directly for now,
 // to test if a minimal, self-contained config works.
@@ -136,5 +136,4 @@ export async function POST(request: NextRequest) {
     // Return a 500, but still try to make it JSON for the client.
     return new Response(JSON.stringify({ issues: [criticalErrorIssue] }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }
-
-    
+}
