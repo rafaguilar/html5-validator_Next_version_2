@@ -2,27 +2,26 @@
 'use server';
 
 import type { NextRequest } from 'next/server';
-import stylelint from 'stylelint';
-// We are not importing stylelint-config-standard directly for now,
-// to test if a minimal, self-contained config works.
+// import stylelint from 'stylelint'; // Commented out for dynamic import
 import type { ValidationIssue } from '@/types';
 
 export async function POST(request: NextRequest) {
   const lintIssues: ValidationIssue[] = [];
   try {
-    const { code, codeFilename } = await request.json();
+    const stylelint = (await import('stylelint')).default; // Dynamic import
+    const { code, codeFilename: rawCodeFilename } = await request.json();
 
     if (!code || typeof code !== 'string') {
-      // This case should ideally be caught by client-side validation first
       return new Response(JSON.stringify({ error: 'CSS code string is required.' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
     }
     
-    // Using a minimal, hardcoded config to avoid dynamic require issues from config loading.
+    const codeFilename = typeof rawCodeFilename === 'string' ? rawCodeFilename : (rawCodeFilename ? String(rawCodeFilename) : undefined);
+
     const minimalConfig = {
       rules: {
         'color-no-invalid-hex': true,
-        // Add other simple, non-plugin rules here if needed for basic testing
         // 'block-no-empty': null, // Example: disable a rule
+        // Add other simple, non-plugin rules here if needed
       },
     };
 
@@ -31,12 +30,11 @@ export async function POST(request: NextRequest) {
       results = await stylelint.lint({
         code: code,
         codeFilename: codeFilename || 'temp.css', // Provide a default filename
-        config: minimalConfig, 
+        config: minimalConfig,
       });
     } catch (lintError: any) {
-      // This catch block is for critical errors during stylelint.lint() itself,
-      // often very malformed CSS that PostCSS (stylelint's parser) can't handle.
-      console.error(`Stylelint.lint() execution error for ${codeFilename}:`, lintError);
+      // This catch block is for critical errors during stylelint.lint() itself
+      console.error(`Stylelint.lint() execution error for ${codeFilename || 'unknown file'}:`, lintError);
       let errMsg = 'A critical error occurred during CSS linting.';
       let errLine: number | undefined;
       let errCol: number | undefined;
@@ -46,7 +44,7 @@ export async function POST(request: NextRequest) {
         errMsg = `CSS Syntax Error: ${lintError.reason}`;
         errLine = lintError.line;
         errCol = lintError.column;
-        errRule = 'css-syntax-error'; // Standardize rule name for these
+        errRule = 'css-syntax-error';
       } else if (lintError.message) {
         errMsg = lintError.message;
       }
@@ -58,9 +56,8 @@ export async function POST(request: NextRequest) {
         line: errLine,
         column: errCol,
         rule: errRule,
-        details: lintError.stack, // Include stack for more debug info if needed
+        details: lintError.stack || String(lintError),
       });
-      // Even with a critical lint error, return a 200 OK with the issues found
       return new Response(JSON.stringify({ issues: lintIssues }), { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
 
@@ -71,10 +68,9 @@ export async function POST(request: NextRequest) {
       if (fileResult.parseErrors && fileResult.parseErrors.length > 0) {
         fileResult.parseErrors.forEach((parseError: any) => { 
           let errMsg = 'Unknown CSS parse error';
-          // PostCSS CssSyntaxError objects often have a 'reason' property
           if (parseError.reason) errMsg = parseError.reason;
-          else if (parseError.text) errMsg = parseError.text; // Some wrapped errors might use 'text'
-          else if (parseError.message) errMsg = parseError.message; // Generic fallback
+          else if (parseError.text) errMsg = parseError.text;
+          else if (parseError.message) errMsg = parseError.message;
           
           lintIssues.push({
             id: `css-parse-${Math.random().toString(36).substring(2, 9)}`,
@@ -89,14 +85,9 @@ export async function POST(request: NextRequest) {
 
       fileResult.warnings.forEach(warning => {
         let message = warning.text;
-        // If Stylelint wraps a PostCSS CssSyntaxError, warning.rule is 'CssSyntaxError'
-        // and warning.text often contains the rule name in parentheses.
-        // Example: "Unclosed block (CssSyntaxError)" or "Missing semicolon (CssSyntaxError)"
-        // We want to keep the core message, e.g., "Unclosed block" or "Missing semicolon".
         if (warning.rule === 'CssSyntaxError' && message.endsWith(` (${warning.rule})`)) {
           message = message.substring(0, message.length - ` (${warning.rule})`.length);
-        } else if (message.includes(`(${warning.rule})`)) {
-          // For other rules, remove the rule name from the message if present
+        } else if (warning.rule && message.includes(`(${warning.rule})`)) {
            message = message.replace(` (${warning.rule})`, '');
         }
 
@@ -110,12 +101,10 @@ export async function POST(request: NextRequest) {
         });
       });
     } else if (results.errored && (!results.results || results.results.length === 0)) {
-      // This case handles scenarios where stylelint signals an error but doesn't provide specific results.
-      // For example, if the input code is empty or fundamentally unprocessable in a way not caught by parseErrors.
       lintIssues.push({
         id: `css-global-error-${Math.random().toString(36).substring(2, 9)}`,
         type: 'error',
-        message: results.output || 'A global Stylelint error occurred during processing. The input CSS might be empty or critically malformed.',
+        message: results.output || 'A global Stylelint error occurred. The CSS might be empty or critically malformed.',
         rule: 'stylelint-global',
       });
     }
@@ -130,10 +119,9 @@ export async function POST(request: NextRequest) {
         id: `css-critical-server-error-${Math.random().toString(36).substring(2, 9)}`,
         type: 'error',
         message: 'Failed to lint CSS due to a server-side exception.',
-        details: error.message || 'An unknown server error occurred.',
+        details: error.message || String(error) || 'An unknown server error occurred.',
         rule: 'stylelint-server-exception',
     };
-    // Return a 500, but still try to make it JSON for the client.
     return new Response(JSON.stringify({ issues: [criticalErrorIssue] }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }
 }
