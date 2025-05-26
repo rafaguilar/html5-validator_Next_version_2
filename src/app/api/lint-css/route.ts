@@ -19,13 +19,18 @@ const createApiIssue = (
   } else if (line !== undefined) {
     fullDetails = `${fullDetails} (line ${line})`.trim();
   }
-  if (rule) {
+  // Rule info is often part of the message from stylelint, but good to have separately if available.
+  // If rule is already in message, no need to add it to details.
+  if (rule && !message.toLowerCase().includes(rule.toLowerCase())) {
     fullDetails = `${fullDetails} Rule: ${rule}`.trim();
   }
 
-  // Remove potential duplicate location info if already in message by stylelint
-  if (message.includes(`(${line}:${column})`)) {
-    message = message.replace(`(${line}:${column})`, '').trim();
+  // Clean up message if it already contains location from stylelint like (line x, col y)
+  // or (x:y)
+  if (line !== undefined && column !== undefined) {
+    const locPattern1 = new RegExp(`\\(line ${line}, col ${column}\\)`, 'i');
+    const locPattern2 = new RegExp(`\\(${line}:${column}\\)`);
+    message = message.replace(locPattern1, '').replace(locPattern2, '').trim();
   }
   
   return {
@@ -48,52 +53,50 @@ export async function POST(request: NextRequest) {
       }), { status: 400, headers: { 'Content-Type': 'application/json' } });
     }
 
-    // Dynamically import stylelint to potentially avoid build-time issues
+    // Dynamically import stylelint to potentially avoid build-time issues on some platforms
     const stylelint = await import('stylelint');
 
-    // Minimal hardcoded config; stylelint might still try to load .stylelintrc.json if codeFilename is used
-    // but this internal config ensures some basic parsing.
+    // Minimal hardcoded config for basic syntax checking.
+    // Stylelint relies on PostCSS for parsing, which catches most syntax errors.
     const config = {
-      // Processor for plain CSS. No custom syntax by default.
-      // We are relying on PostCSS parser used by stylelint for syntax errors.
-      // Explicitly setting rules to empty to avoid issues with extending 'stylelint-config-standard' dynamically
-      // if cosmiconfig (used by stylelint) fails in serverless.
-      rules: {
-        // We are primarily interested in syntax errors caught by the parser.
-        // 'no-extra-semicolons': true, // Example rule if needed
-        // 'declaration-block-no-shorthand-property-overrides': true, // Example
-      },
+      // No specific rules, relying on parser for syntax errors.
+      // If we wanted to enforce stylelint-config-standard, we'd need to ensure
+      // that config can be loaded in the serverless environment.
+      rules: {}, 
     };
     
     let result;
     try {
+      // console.log(`[API lint-css] Linting ${filePath} with content: ${cssContent.substring(0,100)}...`); // For debugging
       result = await stylelint.default.lint({
         code: cssContent,
-        codeFilename: filePath, // Helps stylelint provide better error context
-        config, // Use our minimal config
+        codeFilename: filePath, 
+        config,
         fix: false,
       });
+      // console.log('[API lint-css] Stylelint raw result:', JSON.stringify(result, null, 2)); // For debugging
     } catch (lintError: any) {
-      // Catch errors during the linting process itself (e.g., critical parser failure)
-      console.error(`Stylelint.lint() itself threw an error for ${filePath}:`, lintError);
+      // This catches errors during the linting process itself (e.g., critical parser failure like unclosed block)
+      // console.error(`[API lint-css] Stylelint.lint() itself threw an error for ${filePath}:`, lintError);
       if (lintError.name === 'CssSyntaxError' && lintError.reason) {
-        lintIssues.push(createApiIssue('error', lintError.reason, `Source: ${lintError.input?.file || filePath}`, lintError.rule || 'CssSyntaxError', lintError.line, lintError.column));
+        lintIssues.push(createApiIssue('error', lintError.reason, `Source: ${lintError.input?.file || filePath}`, lintError.ruleId || lintError.rule || 'CssSyntaxError', lintError.line, lintError.column));
       } else {
-        lintIssues.push(createApiIssue('error', 'Stylelint execution failed.', lintError.message || 'Unknown error during stylelint.lint()', 'stylelint-execution-error'));
+        // Generic error if stylelint.lint() fails for other reasons
+        lintIssues.push(createApiIssue('error', `Stylelint execution failed for ${filePath}.`, lintError.message || 'Unknown error during stylelint.lint()', 'stylelint-execution-error'));
       }
+      // Return 200 OK with issues, as the API handled the request, even if linting failed.
       return new Response(JSON.stringify({ issues: lintIssues }), { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
 
     if (result && result.errored) {
       result.results.forEach((res) => {
-        // Handle parse errors (likely more severe syntax issues)
-        // PostCSS parse errors might be in res.parseErrors or an error thrown by stylelint.lint()
+        // Handle parse errors (more severe syntax issues not caught by the try-catch above)
         if (res.parseErrors && res.parseErrors.length > 0) {
             res.parseErrors.forEach((err: any) => { 
               lintIssues.push(createApiIssue('error', err.text || 'CSS parsing error', undefined, err.rule || 'CssSyntaxError', err.line, err.column));
             });
         }
-        // Handle warnings (rule violations)
+        // Handle warnings/errors reported by stylelint rules (if any were active and triggered)
         if (res.warnings && res.warnings.length > 0) {
             res.warnings.forEach((warning) => {
               lintIssues.push(createApiIssue(warning.severity as 'error' | 'warning', warning.text, undefined, warning.rule, warning.line, warning.column));
@@ -101,17 +104,16 @@ export async function POST(request: NextRequest) {
         }
       });
 
-      // If errored is true but no specific issues were parsed, add a generic one
-      if (lintIssues.length === 0) {
-        const generalErrorMessage = result.output || 'Stylelint reported an unspecified CSS error.';
-        // Try to extract details if it's a common PostCSS syntax error format
+      // If errored is true but no specific issues were parsed (e.g. from an unhandled parse error)
+      // Add a generic one, sometimes result.output has more info
+      if (lintIssues.length === 0 && result.output) {
+        const generalErrorMessage = result.output;
         const match = generalErrorMessage.match(/CssSyntaxError: (.+?) at L(\d+):C(\d+)/) || generalErrorMessage.match(/Unknown word\s*at L(\d+):C(\d+)/);
-        if (match) {
+        if (match && match[1] && match[2] && match[3]) {
            lintIssues.push(createApiIssue('error', match[1] || 'CSS Syntax Error', undefined, 'CssSyntaxError', parseInt(match[2]), parseInt(match[3])));
         } else if (generalErrorMessage.includes("Unclosed block")) {
            lintIssues.push(createApiIssue('error', "Unclosed block in CSS", undefined, 'CssSyntaxError'));
-        }
-        else {
+        } else {
            lintIssues.push(createApiIssue('error', 'Stylelint indicated an error, but no specific issues were detailed.', `Raw output (first 200 chars): ${generalErrorMessage.substring(0,200)}`, 'stylelint-general-error'));
         }
       }
@@ -121,7 +123,7 @@ export async function POST(request: NextRequest) {
 
   } catch (error: any) {
     // This catches errors outside the stylelint.lint() call, or if json parsing fails, etc.
-    console.error('Critical error in /api/lint-css POST handler:', error);
+    console.error('[API lint-css] Critical error in POST handler:', error);
     
     const criticalErrorIssue: ValidationIssue = {
         id: `css-critical-server-error-${Math.random().toString(36).substring(2, 9)}`,
@@ -130,6 +132,8 @@ export async function POST(request: NextRequest) {
         details: error.message || String(error) || 'An unknown server error occurred.',
         rule: 'stylelint-server-exception',
     };
+    // Return a 500, but still try to make it JSON for the client.
     return new Response(JSON.stringify({ issues: [criticalErrorIssue] }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }
 }
+
