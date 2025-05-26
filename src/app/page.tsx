@@ -5,7 +5,7 @@ import type { ChangeEvent } from 'react';
 import React, { useState, useEffect } from 'react';
 import JSZip from 'jszip';
 import { HTMLHint, type LintResult, type RuleSet } from 'htmlhint';
-// import * as csstree from 'csstree'; // Removed as csstree is not being used directly
+// csstree import removed
 import { AppHeader } from '@/components/layout/header';
 import { FileUploader } from '@/components/html-validator/file-uploader';
 import { ValidationResults } from '@/components/html-validator/validation-results';
@@ -29,7 +29,7 @@ interface MissingAssetInfo {
 }
 
 const createIssuePageClient = (type: 'error' | 'warning', message: string, details?: string, rule?: string): ValidationIssue => ({
-  id: `issue-page-client-${Math.random().toString(36).substr(2, 9)}`,
+  id: `issue-page-client-${Math.random().toString(36).substring(2, 9)}`,
   type,
   message,
   details,
@@ -38,28 +38,29 @@ const createIssuePageClient = (type: 'error' | 'warning', message: string, detai
 
 const resolveAssetPathInZip = (assetPath: string, baseFilePath: string, zip: JSZip): string | null => {
   if (assetPath.startsWith('data:') || assetPath.startsWith('http:') || assetPath.startsWith('https:') || assetPath.startsWith('//')) {
-    return assetPath;
+    return assetPath; // Absolute or data URI, no resolution needed
   }
 
-  let basePathSegments = baseFilePath.includes('/') ? baseFilePath.split('/').slice(0, -1) : [];
-  const assetPathSegments = assetPath.split('/');
-  let combinedSegments = [...basePathSegments];
-
-  for (const segment of assetPathSegments) {
+  const baseFileDir = baseFilePath.includes('/') ? baseFilePath.substring(0, baseFilePath.lastIndexOf('/')) : '';
+  let pathSegments = (baseFileDir ? baseFileDir.split('/') : []);
+  
+  assetPath.split('/').forEach(segment => {
     if (segment === '..') {
-      if (combinedSegments.length > 0) {
-        combinedSegments.pop();
+      if (pathSegments.length > 0) {
+        pathSegments.pop();
       }
     } else if (segment !== '.' && segment !== '') {
-      combinedSegments.push(segment);
+      pathSegments.push(segment);
     }
-  }
-  const resolvedPath = combinedSegments.join('/');
+  });
+  const resolvedPath = pathSegments.join('/');
+
   if (zip.file(resolvedPath)) {
     return resolvedPath;
   }
+  // Fallback for assets possibly at root if not found relative to baseFilePath
   if (!assetPath.includes('/') && zip.file(assetPath)) {
-    return assetPath;
+     return assetPath;
   }
   return null;
 };
@@ -67,50 +68,52 @@ const resolveAssetPathInZip = (assetPath: string, baseFilePath: string, zip: JSZ
 
 const findHtmlFileInZip = async (zip: JSZip): Promise<{ path: string, content: string } | null> => {
   const allFiles = Object.keys(zip.files);
+  
   const rootIndexHtmlCandidates = allFiles.filter(path => 
-    path.toLowerCase().endsWith('index.html') && !path.startsWith("__MACOSX/")
+    path.toLowerCase().endsWith('index.html') && 
+    !path.startsWith("__MACOSX/") &&
+    (path.split('/').length -1) === (path.endsWith('/') ? 1 : 0) // at root
   );
 
-  let shortestDepthIndexHtml: string | null = null;
-  let minDepth = Infinity;
-
-  for (const path of rootIndexHtmlCandidates) {
-      const depth = path.split('/').length - 1; 
-      if (depth < minDepth) {
-          minDepth = depth;
-          shortestDepthIndexHtml = path;
-      }
+  if (rootIndexHtmlCandidates.length > 0 && zip.file(rootIndexHtmlCandidates[0])) {
+    const content = await zip.file(rootIndexHtmlCandidates[0])!.async("string");
+    return { path: rootIndexHtmlCandidates[0], content };
   }
   
-  if (shortestDepthIndexHtml && zip.file(shortestDepthIndexHtml)) {
-      const content = await zip.file(shortestDepthIndexHtml)!.async("string");
-      return { path: shortestDepthIndexHtml, content };
-  }
-
-  const anyHtmlCandidates = allFiles.filter(path => 
-    path.toLowerCase().endsWith('.html') && !path.startsWith("__MACOSX/")
-  );
-
-  let shortestDepthAnyHtml: string | null = null;
-  minDepth = Infinity;
-
-  for (const path of anyHtmlCandidates) {
-    const depth = path.split('/').length - 1;
-    if (depth < minDepth) {
-        minDepth = depth;
-        shortestDepthAnyHtml = path;
+  // If no index.html at root, find the shallowest index.html
+  let shallowestIndexHtml: { path: string, depth: number } | null = null;
+  for (const path of allFiles) {
+    if (path.toLowerCase().endsWith('index.html') && !path.startsWith("__MACOSX/")) {
+      const depth = path.split('/').length -1;
+      if (!shallowestIndexHtml || depth < shallowestIndexHtml.depth) {
+        shallowestIndexHtml = { path, depth };
+      }
     }
   }
+  if (shallowestIndexHtml && zip.file(shallowestIndexHtml.path)) {
+    const content = await zip.file(shallowestIndexHtml.path)!.async("string");
+    return { path: shallowestIndexHtml.path, content };
+  }
 
-  if (shortestDepthAnyHtml && zip.file(shortestDepthAnyHtml)) {
-      const content = await zip.file(shortestDepthAnyHtml)!.async("string");
-      return { path: shortestDepthAnyHtml, content };
+  // If still no index.html, find any HTML file at the shallowest depth
+  let shallowestHtml: { path: string, depth: number } | null = null;
+  for (const path of allFiles) {
+    if (path.toLowerCase().endsWith('.html') && !path.startsWith("__MACOSX/")) {
+      const depth = path.split('/').length -1;
+      if (!shallowestHtml || depth < shallowestHtml.depth) {
+        shallowestHtml = { path, depth };
+      }
+    }
+  }
+  if (shallowestHtml && zip.file(shallowestHtml.path)) {
+    const content = await zip.file(shallowestHtml.path)!.async("string");
+    return { path: shallowestHtml.path, content };
   }
   
   return null;
 };
 
-// Removed lintCssContent function as csstree dependency is problematic
+// lintCssContent function removed
 
 const processCssContentAndCollectReferences = async (
   cssContent: string,
@@ -118,11 +121,11 @@ const processCssContentAndCollectReferences = async (
   zip: JSZip,
   missingAssetsCollector: MissingAssetInfo[],
   referencedAssetPathsCollector: Set<string>
-  // cssIssuesCollector: ValidationIssue[] // Removed as direct CSS linting is removed
+  // cssLintIssuesCollector removed
 ): Promise<void> => {
-  // const syntaxIssues = lintCssContent(cssContent, cssFilePath); // Removed direct CSS linting call
-  // cssIssuesCollector.push(...syntaxIssues); // Removed
-
+  
+  // Call to lintCssContent removed
+  
   const urlPattern = /url\s*\(\s*(['"]?)(.*?)\1\s*\)/gi;
   let match;
 
@@ -154,11 +157,11 @@ const analyzeCreativeAssets = async (file: File): Promise<{
   unreferencedFiles: string[],
   foundHtmlPath?: string,
   htmlContent?: string,
-  // cssLintIssues: ValidationIssue[], // Removed cssLintIssues
+  // cssLintIssues removed
 }> => {
   const missingAssets: MissingAssetInfo[] = [];
   const referencedAssetPaths = new Set<string>();
-  // const cssLintIssues: ValidationIssue[] = []; // Removed cssLintIssues
+  // const cssLintIssues: ValidationIssue[] = []; // Removed
   let foundHtmlPath: string | undefined;
   let htmlContentForAnalysis: string | undefined;
   let zipBaseDir = ''; 
@@ -170,7 +173,8 @@ const analyzeCreativeAssets = async (file: File): Promise<{
     const htmlFile = await findHtmlFileInZip(zip);
 
     if (!htmlFile) {
-      return { missingAssets, unreferencedFiles: allZipFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis /*, cssLintIssues */ };
+      // return { missingAssets, unreferencedFiles: allZipFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues }; // cssLintIssues removed
+      return { missingAssets, unreferencedFiles: allZipFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis };
     }
 
     foundHtmlPath = htmlFile.path;
@@ -192,7 +196,8 @@ const analyzeCreativeAssets = async (file: File): Promise<{
           referencedAssetPaths.add(cssFilePath);
           processedCssPaths.add(cssFilePath);
           const cssContent = await zip.file(cssFilePath)!.async('string');
-          await processCssContentAndCollectReferences(cssContent, cssFilePath, zip, missingAssets, referencedAssetPaths /*, cssLintIssues */);
+          // await processCssContentAndCollectReferences(cssContent, cssFilePath, zip, missingAssets, referencedAssetPaths, cssLintIssues); // cssLintIssues removed
+          await processCssContentAndCollectReferences(cssContent, cssFilePath, zip, missingAssets, referencedAssetPaths);
         } else if (!cssFilePath || !zip.file(cssFilePath)) {
           missingAssets.push({ type: 'htmlLinkCss', path: href, referencedFrom: foundHtmlPath, originalSrc: href });
         }
@@ -206,14 +211,16 @@ const analyzeCreativeAssets = async (file: File): Promise<{
             referencedAssetPaths.add(potentialCssPath);
             processedCssPaths.add(potentialCssPath);
             const cssContent = await zip.file(potentialCssPath)!.async('string');
-            await processCssContentAndCollectReferences(cssContent, potentialCssPath, zip, missingAssets, referencedAssetPaths /*, cssLintIssues */);
+            // await processCssContentAndCollectReferences(cssContent, potentialCssPath, zip, missingAssets, referencedAssetPaths, cssLintIssues); // cssLintIssues removed
+            await processCssContentAndCollectReferences(cssContent, potentialCssPath, zip, missingAssets, referencedAssetPaths);
         } else {
             const potentialAbsoluteCssPath = suffix;
              if (zipBaseDir !== '' && zip.file(potentialAbsoluteCssPath) && !processedCssPaths.has(potentialAbsoluteCssPath)) {
                 referencedAssetPaths.add(potentialAbsoluteCssPath);
                 processedCssPaths.add(potentialAbsoluteCssPath);
                 const cssContent = await zip.file(potentialAbsoluteCssPath)!.async('string');
-                await processCssContentAndCollectReferences(cssContent, potentialAbsoluteCssPath, zip, missingAssets, referencedAssetPaths /*, cssLintIssues */);
+                // await processCssContentAndCollectReferences(cssContent, potentialAbsoluteCssPath, zip, missingAssets, referencedAssetPaths, cssLintIssues); // cssLintIssues removed
+                await processCssContentAndCollectReferences(cssContent, potentialAbsoluteCssPath, zip, missingAssets, referencedAssetPaths);
             }
         }
     }
@@ -239,7 +246,7 @@ const analyzeCreativeAssets = async (file: File): Promise<{
     const scriptElements = Array.from(doc.querySelectorAll('script[src]'));
     for (const el of scriptElements) {
         const srcAttr = el.getAttribute('src');
-        if (srcAttr && !srcAttr.startsWith('http:') && !srcAttr.startsWith('https:')) {
+        if (srcAttr && !srcAttr.startsWith('http:') && !srcAttr.startsWith('https:')) { // Check for external scripts
             const assetPath = resolveAssetPathInZip(srcAttr, foundHtmlPath, zip);
             if (assetPath && zip.file(assetPath)) {
                 referencedAssetPaths.add(assetPath);
@@ -261,12 +268,14 @@ const analyzeCreativeAssets = async (file: File): Promise<{
         }
     });
 
-    return { missingAssets, unreferencedFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis /*, cssLintIssues */ };
+    // return { missingAssets, unreferencedFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues }; // cssLintIssues removed
+    return { missingAssets, unreferencedFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis };
 
   } catch (error: any) {
     const criticalErrorIssue: ValidationIssue = createIssuePageClient('error', `Critical error analyzing ZIP file ${file.name}.`, error.message, 'zip-analysis-error');
-    // cssLintIssues.push(criticalErrorIssue); // This was originally for CSS linting, repurposing for general analysis error
-    return { missingAssets: [ {type: 'htmlScript', path: 'unknown', referencedFrom: 'zip analysis', originalSrc: 'critical error'} ], unreferencedFiles: [], foundHtmlPath, htmlContent: htmlContentForAnalysis /*, cssLintIssues: [criticalErrorIssue] */ };
+    // cssLintIssues.push(criticalErrorIssue); // cssLintIssues removed
+    // return { missingAssets: [ {type: 'htmlScript', path: 'unknown', referencedFrom: 'zip analysis', originalSrc: 'critical error'} ], unreferencedFiles: [], foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues }; // cssLintIssues removed
+     return { missingAssets: [ {type: 'htmlScript', path: 'unknown', referencedFrom: 'zip analysis', originalSrc: 'critical error'} ], unreferencedFiles: [], foundHtmlPath, htmlContent: htmlContentForAnalysis };
   }
 };
 
@@ -335,7 +344,7 @@ const buildValidationResult = async (
     unreferencedFiles: string[],
     foundHtmlPath?: string,
     htmlContent?: string,
-    // cssLintIssues: ValidationIssue[], // Removed
+    // cssLintIssues removed
   }
 ): Promise<Omit<ValidationResult, 'id' | 'fileName' | 'fileSize'>> => {
   const issues: ValidationIssue[] = [];
@@ -377,7 +386,7 @@ const buildValidationResult = async (
     issues.push(createIssuePageClient('warning', `Unreferenced file in ZIP: '${unreferencedFilePath}'.`, `Consider removing if not used to reduce file size.`));
   }
   
-  // issues.push(...analysis.cssLintIssues); // Removed
+  // issues.push(...analysis.cssLintIssues); // cssLintIssues removed
 
   if (analysis.htmlContent) {
     const lintingIssues = lintHtmlContent(analysis.htmlContent);
@@ -484,6 +493,7 @@ const buildValidationResult = async (
     fileStructureOk,
     detectedClickTags: detectedClickTags.length > 0 ? detectedClickTags : undefined,
     maxFileSize: MAX_FILE_SIZE,
+    // htmlContent: analysis.htmlContent, // Not strictly needed for validation
   };
 };
 
@@ -527,6 +537,7 @@ export default function HomePage() {
             fileStructureOk: true, 
             adDimensions: { width: initialWidth, height: initialHeight, actual: undefined },
             detectedClickTags: undefined,
+            // htmlContent: undefined, // Not strictly needed for validation
         };
     });
     setValidationResults(initialPendingResults);
@@ -552,7 +563,8 @@ export default function HomePage() {
             fileSize: file.size,
             maxFileSize: MAX_FILE_SIZE,
             fileStructureOk: false, 
-            adDimensions: initialPendingResults[index].adDimensions, 
+            adDimensions: initialPendingResults[index].adDimensions,
+            // htmlContent: undefined, // Not strictly needed for validation
         };
         return errorResult;
       }
