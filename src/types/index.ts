@@ -4,6 +4,7 @@ export interface ValidationIssue {
   type: 'error' | 'warning';
   message: string;
   details?: string;
+  rule?: string; // Added rule to align with createIssuePageClient
 }
 
 export interface ClickTagInfo {
@@ -23,5 +24,6 @@ export interface ValidationResult {
   fileSize?: number; // in bytes
   maxFileSize?: number; // in bytes
   // htmlContent?: string; // This was for previews, not strictly needed for core validation of v1.1.0
+  hasCorrectTopLevelClickTag?: boolean; // New field
 }
 

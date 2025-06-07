@@ -329,6 +329,13 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
                   </div>
                 )}
 
+                {result.hasCorrectTopLevelClickTag && (
+                  <div className="mt-2 text-sm text-green-600 flex items-center p-3 bg-green-500/10 rounded-md">
+                    <CheckCircle2 className="w-5 h-5 mr-2 flex-shrink-0 text-green-500" />
+                    Correct top-level clickTag (named 'clickTag' with HTTPS URL) detected.
+                  </div>
+                )}
+
 
                 {result.issues.length > 0 && (
                   <div>
@@ -353,10 +360,16 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
                     </ScrollArea>
                   </div>
                 )}
-                {result.issues.length === 0 && result.status !== 'pending' && result.status !== 'validating' && (
+                {result.issues.length === 0 && result.status !== 'pending' && result.status !== 'validating' && !result.hasCorrectTopLevelClickTag && (
                   <div className="text-sm text-green-600 flex items-center p-3 bg-green-500/10 rounded-md">
-                    <CheckCircle2 className="w-5 h-5 mr-2 flex-shrink-0"/>
+                    <CheckCircle2 className="w-5 h-5 mr-2 flex-shrink-0 text-green-500"/>
                     No issues found. This creative meets the requirements.
+                  </div>
+                )}
+                 {result.issues.length === 0 && result.status === 'success' && result.hasCorrectTopLevelClickTag && (
+                  <div className="text-sm text-green-600 flex items-center p-3 bg-green-500/10 rounded-md">
+                    <CheckCircle2 className="w-5 h-5 mr-2 flex-shrink-0 text-green-500"/>
+                    Creative meets requirements.
                   </div>
                 )}
               </CardContent>

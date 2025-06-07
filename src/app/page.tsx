@@ -332,18 +332,22 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
                 if (assetPath && zip.file(assetPath)) {
                     referencedAssetPaths.add(assetPath);
                     if (assetPath.toLowerCase().endsWith('.js')) {
-                        hasNonCdnExternalScripts = true;
+                        // Check if it's a non-CDN (local) script
+                        // This simplistic check assumes CDNs are absolute, local are relative.
+                        // A more robust check might involve a list of CDN hostnames.
+                        hasNonCdnExternalScripts = true; 
                     }
                 } else { // Missing local script
                      missingAssets.push({
                         type: 'htmlScript',
                         path: srcAttr,
-                        referencedFrom: foundHtmlPath, // `foundHtmlPath` is guaranteed to be defined if we reach here
+                        referencedFrom: foundHtmlPath, 
                         originalSrc: srcAttr
                     });
                 }
             }
             // External CDNs or data URIs are not considered for `hasNonCdnExternalScripts`
+            // unless we want to refine this (e.g. some CDNs are fine, others not)
         }
     }
     
@@ -367,7 +371,8 @@ const findClickTagsInHtml = (htmlContent: string | null): ClickTagInfo[] => {
   if (!htmlContent) return [];
 
   const clickTags: ClickTagInfo[] = [];
-  const clickTagRegex = /(?:^|[\s;,\{\(])\s*(?:(?:var|let|const)\s+)?(?:window\.)?([a-zA-Z0-9_]*clickTag[a-zA-Z0-9_]*)\s*=\s*(["'])((?:https?:\/\/).+?)\2/gmi;
+  // Regex from user's provided working version
+  const clickTagRegex = /(?:^|[\s;,\{\(])\s*(?:(?:var|let|const)\s+)?(?:window\.)?([a-zA-Z0-9_]*clickTag[a-zA-Z0-9_]*)\s*=\s*["'](http[^"']+)["']/gmi;
   
   let scriptContent = "";
   const scriptTagRegex = /<script[^>]*>([\s\S]*?)<\/script>/gi;
@@ -379,7 +384,7 @@ const findClickTagsInHtml = (htmlContent: string | null): ClickTagInfo[] => {
   let match;
   while ((match = clickTagRegex.exec(scriptContent)) !== null) {
     const name = match[1];
-    const url = match[3]; // Group 3 now correctly captures the URL
+    const url = match[2]; // In this regex, URL is group 2
     clickTags.push({
       name,
       url,
@@ -427,6 +432,7 @@ const buildValidationResult = async (
 ): Promise<Omit<ValidationResult, 'id' | 'fileName' | 'fileSize'>> => {
   const issues: ValidationIssue[] = [];
   let status: ValidationResult['status'] = 'success';
+  let hasCorrectTopLevelClickTag = false;
 
   if (file.size > MAX_FILE_SIZE) {
     issues.push(createIssuePageClient('error', `File size exceeds limit (${(MAX_FILE_SIZE / 1024).toFixed(0)}KB).`));
@@ -454,6 +460,9 @@ const buildValidationResult = async (
 
   } else {
     for (const tag of detectedClickTags) {
+      if (tag.name === "clickTag" && tag.isHttps) {
+        hasCorrectTopLevelClickTag = true;
+      }
       if (!tag.isHttps) {
         issues.push(createIssuePageClient('warning', `ClickTag '${tag.name}' uses non-HTTPS URL.`, `URL: ${tag.url}`));
       }
@@ -591,6 +600,7 @@ const buildValidationResult = async (
     fileStructureOk,
     detectedClickTags: detectedClickTags.length > 0 ? detectedClickTags : undefined,
     maxFileSize: MAX_FILE_SIZE,
+    hasCorrectTopLevelClickTag,
   };
 };
 
@@ -704,5 +714,3 @@ export default function HomePage() {
     </div>
   );
 }
-
-    
