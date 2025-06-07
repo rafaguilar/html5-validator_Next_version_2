@@ -36,6 +36,8 @@ interface CreativeAssetAnalysis {
   htmlContent?: string;
   cssLintIssues: ValidationIssue[];
   hasNonCdnExternalScripts: boolean;
+  htmlFileCount: number;
+  allHtmlFilePathsInZip: string[];
 }
 
 
@@ -235,31 +237,36 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
   const cssLintIssues: ValidationIssue[] = [];
   let foundHtmlPath: string | undefined;
   let htmlContentForAnalysis: string | undefined;
-  let zipBaseDir = ''; // To help resolve paths like 'css/style.css' if HTML is in root
-  let hasNonCdnExternalScripts = false; // Flag for external JS files
+  let zipBaseDir = ''; 
+  let hasNonCdnExternalScripts = false;
+  let htmlFileCount = 0;
+  let allHtmlFilePathsInZip: string[] = [];
+
 
   try {
     const zip = await JSZip.loadAsync(file);
     const allZipFiles = Object.keys(zip.files).filter(path => !zip.files[path].dir && !path.startsWith("__MACOSX/") && !path.endsWith('.DS_Store'));
+    
+    allHtmlFilePathsInZip = allZipFiles.filter(path => path.toLowerCase().endsWith('.html'));
+    htmlFileCount = allHtmlFilePathsInZip.length;
 
     const htmlFile = await findHtmlFileInZip(zip);
 
     if (!htmlFile) {
       // console.warn(`[analyzeCreativeAssets] No HTML file found in ${file.name}. All files will be marked as unreferenced.`);
-      return { missingAssets, unreferencedFiles: allZipFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, hasNonCdnExternalScripts };
+      return { missingAssets, unreferencedFiles: allZipFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, hasNonCdnExternalScripts, htmlFileCount, allHtmlFilePathsInZip };
     }
 
     foundHtmlPath = htmlFile.path;
     if (foundHtmlPath.includes('/')) {
         zipBaseDir = foundHtmlPath.substring(0, foundHtmlPath.lastIndexOf('/') + 1);
     }
-    referencedAssetPaths.add(foundHtmlPath); // The HTML file itself is referenced
+    referencedAssetPaths.add(foundHtmlPath); 
     htmlContentForAnalysis = htmlFile.content;
     const doc = new DOMParser().parseFromString(htmlContentForAnalysis, 'text/html');
 
-    // Process linked stylesheets
     const linkedStylesheets = Array.from(doc.querySelectorAll('link[rel="stylesheet"]'));
-    const processedCssPaths = new Set<string>(); // To avoid processing same CSS file multiple times
+    const processedCssPaths = new Set<string>(); 
 
     for (const linkTag of linkedStylesheets) {
       const href = linkTag.getAttribute('href');
@@ -276,21 +283,17 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
       }
     }
     
-    // Proactively check for common CSS file paths if not already processed
     const commonCssSuffixes = ['style.css', 'css/style.css', 'main.css', 'css/main.css'];
     for (const suffix of commonCssSuffixes) {
-        const potentialCssPath = zipBaseDir + suffix; // Relative to HTML's dir or ZIP root
+        const potentialCssPath = zipBaseDir + suffix; 
         if (zip.file(potentialCssPath) && !processedCssPaths.has(potentialCssPath)) {
-            // console.log(`[analyzeCreativeAssets] Proactively checking CSS: ${potentialCssPath}`);
             referencedAssetPaths.add(potentialCssPath);
             processedCssPaths.add(potentialCssPath);
             const cssContent = await zip.file(potentialCssPath)!.async('string');
             await processCssContentAndCollectReferences(cssContent, potentialCssPath, zip, missingAssets, referencedAssetPaths, cssLintIssues);
         } else {
-            // Check from absolute ZIP root if not found relative to HTML dir
             const potentialAbsoluteCssPath = suffix;
              if (zipBaseDir !== '' && zip.file(potentialAbsoluteCssPath) && !processedCssPaths.has(potentialAbsoluteCssPath)) {
-                // console.log(`[analyzeCreativeAssets] Proactively checking absolute CSS: ${potentialAbsoluteCssPath}`);
                 referencedAssetPaths.add(potentialAbsoluteCssPath);
                 processedCssPaths.add(potentialAbsoluteCssPath);
                 const cssContent = await zip.file(potentialAbsoluteCssPath)!.async('string');
@@ -299,8 +302,6 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
         }
     }
 
-
-    // Process media elements (img, source)
     const mediaElements = Array.from(doc.querySelectorAll('img[src], source[src]'));
     for (const el of mediaElements) {
         const srcAttr = el.getAttribute('src');
@@ -319,7 +320,6 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
         }
     }
 
-    // Process script elements
     const scriptElements = Array.from(doc.querySelectorAll('script[src]'));
     for (const el of scriptElements) {
         const srcAttr = el.getAttribute('src');
@@ -327,15 +327,14 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
             const isExternalUrl = srcAttr.startsWith('http:') || srcAttr.startsWith('https:') || srcAttr.startsWith('//');
             const isDataUri = srcAttr.startsWith('data:');
 
-            if (!isExternalUrl && !isDataUri) { // Local script file
+            if (!isExternalUrl && !isDataUri) { 
                 const assetPath = resolveAssetPathInZip(srcAttr, foundHtmlPath, zip);
                 if (assetPath && zip.file(assetPath)) {
                     referencedAssetPaths.add(assetPath);
                     if (assetPath.toLowerCase().endsWith('.js')) {
-                        // Check if it's a non-CDN (local) script
                         hasNonCdnExternalScripts = true; 
                     }
-                } else { // Missing local script
+                } else { 
                      missingAssets.push({
                         type: 'htmlScript',
                         path: srcAttr,
@@ -349,16 +348,19 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
     
     const unreferencedFiles: string[] = [];
     allZipFiles.forEach(filePathInZip => {
-        if (!referencedAssetPaths.has(filePathInZip)) {
+        if (!referencedAssetPaths.has(filePathInZip) && !allHtmlFilePathsInZip.includes(filePathInZip)) { // Ensure HTML files aren't marked unreferenced if they are the primary
             unreferencedFiles.push(filePathInZip);
+        } else if (allHtmlFilePathsInZip.includes(filePathInZip) && filePathInZip !== foundHtmlPath && htmlFileCount > 1) {
+            // If it's an HTML file, not the primary one, and there are multiple HTML files, it could be considered unreferenced by primary
+            // Or handle it via the multiple HTML files error specifically
         }
     });
 
-    return { missingAssets, unreferencedFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, hasNonCdnExternalScripts };
+    return { missingAssets, unreferencedFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, hasNonCdnExternalScripts, htmlFileCount, allHtmlFilePathsInZip };
 
   } catch (error: any) {
     cssLintIssues.push(createIssuePageClient('error', `Critical error analyzing ZIP file ${file.name}.`, error.message, 'zip-analysis-error'));
-    return { missingAssets, unreferencedFiles: [], foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, hasNonCdnExternalScripts };
+    return { missingAssets, unreferencedFiles: [], foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, hasNonCdnExternalScripts, htmlFileCount, allHtmlFilePathsInZip };
   }
 };
 
@@ -366,9 +368,8 @@ const findClickTagsInHtml = (htmlContent: string | null): ClickTagInfo[] => {
   if (!htmlContent) return [];
 
   const clickTags: ClickTagInfo[] = [];
-  // Regex from user's provided working version (Netlify stable)
-  const clickTagRegex = /(?:^|[\s;,\{\(])\s*(?:(?:var|let|const)\s+)?(?:window\.)?([a-zA-Z0-9_]*clickTag[a-zA-Z0-9_]*)\s*=\s*["'](http[^"']+)["']/gmi;
-  
+  const clickTagRegex = /(?:^|[\s;,\{\(])\s*(?:(?:var|let|const)\s+)?(?:window\.)?([a-zA-Z0-9_]*clickTag[a-zA-Z0-9_]*)\s*=\s*(["'])((?:https?:\/\/)(?:(?!\2).)*?)\2/gmi;
+
   let scriptContent = "";
   const scriptTagRegex = /<script[^>]*>([\s\S]*?)<\/script>/gi;
   let scriptMatch;
@@ -379,7 +380,7 @@ const findClickTagsInHtml = (htmlContent: string | null): ClickTagInfo[] => {
   let match;
   while ((match = clickTagRegex.exec(scriptContent)) !== null) {
     const name = match[1]; 
-    const url = match[2]; // In this regex, URL is group 2
+    const url = match[3]; 
     clickTags.push({
       name,
       url,
@@ -431,6 +432,15 @@ const buildValidationResult = async (
 
   if (file.size > MAX_FILE_SIZE) {
     issues.push(createIssuePageClient('error', `File size exceeds limit (${(MAX_FILE_SIZE / 1024).toFixed(0)}KB).`));
+  }
+
+  if (analysis.htmlFileCount > 1) {
+    issues.push(createIssuePageClient(
+      'error',
+      'Multiple HTML files found in ZIP.',
+      `The ZIP file should contain only one primary HTML file. Found ${analysis.htmlFileCount} HTML files: ${analysis.allHtmlFilePathsInZip.join(', ')}.`,
+      'multiple-html-files'
+    ));
   }
 
   const detectedClickTags = findClickTagsInHtml(analysis.htmlContent || null);
@@ -511,7 +521,7 @@ const buildValidationResult = async (
     const metaTagMatch = analysis.htmlContent.match(metaTagRegex);
     if (metaTagMatch && metaTagMatch[1]) {
       adSizeMetaTagContent = metaTagMatch[1];
-      const metaDimRegex = /width=([^,;\s"]+)[,;]?\s*height=([^,;\s"]+)/i; // More flexible capture
+      const metaDimRegex = /width=([^,;\s"]+)[,;]?\s*height=([^,;\s"]+)/i; 
       const metaDimValMatch = adSizeMetaTagContent.match(metaDimRegex);
 
       if (metaDimValMatch && metaDimValMatch[1] && metaDimValMatch[2]) {
@@ -573,10 +583,8 @@ const buildValidationResult = async (
       expectedDim = {width: fallbackDim.width, height: fallbackDim.height};
       issues.push(createIssuePageClient('error', `Could not determine ad dimensions from meta tag or filename. Defaulted to a fallback guess: ${fallbackDim.width}x${fallbackDim.height}. Verify ad.size meta tag and filename conventions.`));
   } else {
-      // Fallback if no dimensions could be determined from any source
-      expectedDim = { width: 300, height: 250 }; // A common default
+      expectedDim = { width: 300, height: 250 }; 
       if (analysis.htmlContent || (filenameIntrinsicWidth === undefined && filenameIntrinsicHeight === undefined)) {
-         // Only add this error if we actually had HTML to parse or no filename dimensions
          issues.push(createIssuePageClient('error', 'Could not determine ad dimensions. Defaulted to 300x250. Ensure ad.size meta tag or filename convention is used.'));
       }
   }
@@ -641,7 +649,7 @@ export default function HomePage() {
         if (filenameDimMatch && filenameDimMatch[1] && filenameDimMatch[2]) {
             initialWidth = parseInt(filenameDimMatch[1], 10);
             initialHeight = parseInt(filenameDimMatch[2], 10);
-        } else if (POSSIBLE_FALLBACK_DIMENSIONS.length > 0) { // Fallback to a random common dimension if not in filename
+        } else if (POSSIBLE_FALLBACK_DIMENSIONS.length > 0) { 
             const tempDim = POSSIBLE_FALLBACK_DIMENSIONS[Math.floor(Math.random() * POSSIBLE_FALLBACK_DIMENSIONS.length)];
             initialWidth = tempDim.width;
             initialHeight = tempDim.height;
@@ -653,9 +661,10 @@ export default function HomePage() {
             issues: [],
             fileSize: file.size,
             maxFileSize: MAX_FILE_SIZE,
-            fileStructureOk: true, // Assume true initially
+            fileStructureOk: true, 
             adDimensions: { width: initialWidth, height: initialHeight, actual: undefined },
             detectedClickTags: undefined,
+            hasCorrectTopLevelClickTag: false,
         };
     });
     setValidationResults(initialPendingResults);
@@ -673,7 +682,6 @@ export default function HomePage() {
           ...validationResultPart,
         };
       } catch (error) {
-        // console.error(`Error during validation for ${file.name}:`, error);
         const errorResult: ValidationResult = {
             id: currentPendingResultId, 
             fileName: file.name,
@@ -681,8 +689,9 @@ export default function HomePage() {
             issues: [createIssuePageClient('error', 'An unexpected error occurred during validation process.', (error as Error).message)],
             fileSize: file.size,
             maxFileSize: MAX_FILE_SIZE,
-            fileStructureOk: false, // Assume false on critical error
-            adDimensions: initialPendingResults[index].adDimensions, // Use initial pending dimensions
+            fileStructureOk: false, 
+            adDimensions: initialPendingResults[index].adDimensions, 
+            hasCorrectTopLevelClickTag: false,
         };
         return errorResult;
       }
@@ -699,7 +708,6 @@ export default function HomePage() {
   };
 
   useEffect(() => {
-    // Clear results if selected files are cleared
     if (selectedFiles.length === 0) {
         setValidationResults([]);
     }
@@ -726,6 +734,5 @@ export default function HomePage() {
     </div>
   );
 }
-
 
     
