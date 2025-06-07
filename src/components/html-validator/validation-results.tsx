@@ -20,15 +20,17 @@ interface ValidationResultsProps {
 }
 
 const StatusIcon = ({ status }: { status: ValidationResult['status'] }) => {
+  // Color will be determined by parent's text color (e.g., text-destructive-foreground)
+  const commonClass = "w-5 h-5";
   switch (status) {
     case 'success':
-      return <CheckCircle2 className="w-5 h-5 text-green-500" />;
+      return <CheckCircle2 className={commonClass} />;
     case 'error':
-      return <XCircle className="w-5 h-5 text-destructive" />;
+      return <XCircle className={commonClass} />;
     case 'warning':
-      return <AlertTriangle className="w-5 h-5 text-accent" />;
+      return <AlertTriangle className={commonClass} />;
     default:
-      return <Info className="w-5 h-5 text-muted-foreground" />;
+      return <Info className={commonClass} />; // For pending/validating
   }
 };
 
@@ -235,38 +237,40 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
         )}
       </div>
       <div ref={reportRef}>
-        {results.map(result => (
+        {results.map(result => {
+          let headerBgClass = 'bg-muted/30';
+          let headerTextClass = 'text-foreground'; // Default text for pending/validating
+          let badgeTextClass = 'text-foreground';
+
+          if (result.status === 'success') {
+            headerBgClass = 'bg-success';
+            headerTextClass = 'text-success-foreground';
+            badgeTextClass = 'text-success-foreground';
+          } else if (result.status === 'error') {
+            headerBgClass = 'bg-destructive';
+            headerTextClass = 'text-destructive-foreground';
+            badgeTextClass = 'text-destructive-foreground';
+          } else if (result.status === 'warning') {
+            headerBgClass = 'bg-accent';
+            headerTextClass = 'text-accent-foreground';
+            badgeTextClass = 'text-accent-foreground';
+          }
+
+          return (
             <Card key={result.id} className="shadow-lg overflow-hidden mb-6">
-              <CardHeader className={`flex flex-row items-center justify-between space-y-0 pb-2 ${
-                result.status === 'success' ? 'bg-green-500/10' :
-                result.status === 'error' ? 'bg-destructive/10' :
-                result.status === 'warning' ? 'bg-accent/10' :
-                'bg-muted/30'
-              }`}>
+              <CardHeader className={`flex flex-row items-center justify-between space-y-0 p-4 ${headerBgClass} ${headerTextClass}`}>
                 <div className="min-w-0">
-                  <CardTitle className="text-lg font-semibold text-foreground truncate" title={result.fileName}>
+                  <CardTitle className={`text-lg font-semibold truncate ${headerTextClass}`} title={result.fileName}>
                     {result.fileName}
                   </CardTitle>
-                  <CardDescription className="text-xs">
+                  <CardDescription className={`text-xs ${headerTextClass} opacity-80`}>
                     Validation Status
                   </CardDescription>
                 </div>
-                <Badge variant={
-                  result.status === 'success' ? 'default' :
-                  result.status === 'error' ? 'destructive' :
-                  result.status === 'warning' ? 'default' : // Using 'default' for warning which will use accent color
-                  'secondary'
-                }
-                className={`py-1 px-3 text-sm ${
-                    result.status === 'success' ? 'bg-green-600 text-white' :
-                    result.status === 'error' ? 'bg-destructive text-destructive-foreground' :
-                    result.status === 'warning' ? 'bg-accent text-accent-foreground' : // Accent for warning
-                    ''
-                }`}
-                >
+                <div className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-medium ${badgeTextClass}`}>
                   <StatusIcon status={result.status} />
                   <span className="ml-2 capitalize">{result.status}</span>
-                </Badge>
+                </div>
               </CardHeader>
               <CardContent className="p-6 space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
@@ -371,7 +375,7 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
               )}
             </Card>
           )
-        )}
+        })}
       </div>
       {results.length > 0 && !results.some(r => r.status === 'pending' || r.status === 'validating') && (
         <div className="mt-8 pt-6 border-t border-border text-muted-foreground text-xs">
@@ -388,5 +392,3 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
     </div>
   );
 }
-
-  

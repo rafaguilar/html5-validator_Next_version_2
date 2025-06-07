@@ -25,11 +25,18 @@
     --muted: 200 17% 85%; /* Muted gray */
     --muted-foreground: 210 15% 45%; /* Darker muted text */
 
-    --accent: 25 80% 52%; /* Orange #e67e22 */
-    --accent-foreground: 0 0% 100%; /* White text for orange */
+    /* Error state: Red background, white text */
+    --destructive: 0 65% 51%; /* Red like #d32f2f */
+    --destructive-foreground: 0 0% 100%; /* White */
 
-    --destructive: 25 80% 52%; /* Orange for errors */
-    --destructive-foreground: 0 0% 100%; /* White text for orange errors */
+    /* Warning state: Orange background, dark text */
+    --accent: 33 97% 52%; /* Orange like #fb8c00 */
+    --accent-foreground: 25 70% 20%; /* Dark orange/brown for text */
+    
+    /* Success state: Green background, dark text */
+    --success: 87 44% 60%; /* Light Green like #9ccc65 */
+    --success-foreground: 122 39% 30%; /* Dark Green for text */
+
 
     --border: 200 10% 80%; /* Lighter border */
     --input: 200 10% 88%; /* Input background */
@@ -74,11 +81,17 @@
     --muted: 210 20% 22%;
     --muted-foreground: 200 17% 70%;
 
-    --accent: 25 80% 58%; /* Orange #e67e22, slightly brighter for dark bg */
-    --accent-foreground: 0 0% 100%;
+    /* Error state: Darker Red background, off-white text */
+    --destructive: 0 60% 45%; 
+    --destructive-foreground: 0 0% 95%;
 
-    --destructive: 25 80% 58%; /* Orange for errors */
-    --destructive-foreground: 0 0% 100%;
+    /* Warning state: Darker Orange background, lighter orange/brown text */
+    --accent: 33 70% 45%; 
+    --accent-foreground: 30 60% 80%; 
+    
+    /* Success state: Darker Green background, lighter green text */
+    --success: 87 35% 45%; 
+    --success-foreground: 87 35% 80%;
 
     --border: 210 20% 30%;
     --input: 210 20% 25%;
