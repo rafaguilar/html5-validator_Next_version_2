@@ -279,12 +279,18 @@ const analyzeCreativeAssets = async (file: File): Promise<{
   }
 };
 
-const findClickTagsInHtml = (htmlContent: string | null): ClickTagInfo[] => {
-  if (!htmlContent) return [];
+interface ClickTagAnalysisResult {
+  validTags: ClickTagInfo[];
+  warningTags: Array<{ name: string; url: string }>;
+}
 
-  const clickTags: ClickTagInfo[] = [];
-  const clickTagRegex = /(?:^|[\s;,\{\(])\s*(?:(?:var|let|const)\s+)?(?:window\.)?([a-zA-Z0-9_]*clickTag[a-zA-Z0-9_]*)\s*=\s*["'](http[^"']+)["']/gmi;
-  
+const findClickTagsInHtml = (htmlContent: string | null): ClickTagAnalysisResult => {
+  const result: ClickTagAnalysisResult = {
+    validTags: [],
+    warningTags: [],
+  };
+  if (!htmlContent) return result;
+
   let scriptContent = "";
   const scriptTagRegex = /<script[^>]*>([\s\S]*?)<\/script>/gi;
   let scriptMatch;
@@ -292,18 +298,39 @@ const findClickTagsInHtml = (htmlContent: string | null): ClickTagInfo[] => {
     scriptContent += scriptMatch[1] + "\n"; 
   }
 
-  let match;
-  while ((match = clickTagRegex.exec(scriptContent)) !== null) {
-    const name = match[1];
-    const url = match[2];
-    clickTags.push({
+  const validTagNames = new Set<string>();
+
+  // First pass: Strict, case-sensitive for valid clickTags
+  // Formats: clickTag, clickTag#, clickTag_#, clickTag-#
+  const strictRegex = /(?:var|let|const)\s+(clickTag(?:(?:_|-)?\d+)?)\s*=\s*["'](http[^"']+)["']/g;
+  let strictMatchInstance;
+  while ((strictMatchInstance = strictRegex.exec(scriptContent)) !== null) {
+    const name = strictMatchInstance[1];
+    const url = strictMatchInstance[2];
+    result.validTags.push({
       name,
       url,
       isHttps: url.startsWith('https://'),
     });
+    validTagNames.add(name);
   }
-  return clickTags;
+
+  // Second pass: Broader, case-insensitive for warnings on non-standard names
+  // Catches things like "ClickTag", "myClickTag", "clicktag_custom" etc.
+  const warningRegex = /(?:var|let|const)\s+([a-zA-Z0-9_]*clickTag[a-zA-Z0-9_]*)\s*=\s*["'](http[^"']+)["']/gi;
+  let warningMatchInstance;
+  while ((warningMatchInstance = warningRegex.exec(scriptContent)) !== null) {
+    const name = warningMatchInstance[1];
+    const url = warningMatchInstance[2];
+    // If not already captured by the strict (case-sensitive and format-specific) check
+    if (!validTagNames.has(name)) {
+      result.warningTags.push({ name, url });
+    }
+  }
+  
+  return result;
 };
+
 
 const lintHtmlContent = (htmlString: string): ValidationIssue[] => {
   if (!htmlString) return [];
@@ -354,24 +381,37 @@ const buildValidationResult = async (
     issues.push(createIssuePageClient('error', `File size exceeds limit (${(MAX_FILE_SIZE / 1024).toFixed(0)}KB).`));
   }
 
-  const detectedClickTags = findClickTagsInHtml(analysis.htmlContent || null);
+  const clickTagAnalysis = findClickTagsInHtml(analysis.htmlContent || null);
+  const detectedClickTagsForReport: ClickTagInfo[] = clickTagAnalysis.validTags;
 
-  if (detectedClickTags.length === 0 && analysis.htmlContent) {
+  // Process valid clickTags for HTTPS warnings
+  for (const tag of detectedClickTagsForReport) {
+    if (!tag.isHttps) {
+      issues.push(createIssuePageClient('warning', `ClickTag '${tag.name}' uses non-HTTPS URL.`, `URL: ${tag.url}`));
+    }
+  }
+
+  // Process non-standard clickTag names for warnings
+  for (const warningTag of clickTagAnalysis.warningTags) {
+    issues.push(createIssuePageClient(
+      'warning',
+      `Potentially non-standard clickTag naming: '${warningTag.name}'.`,
+      `The standard format is 'clickTag' or 'clickTag' followed by a number (e.g., clickTag1, clickTag_2, clickTag-3). URL found: ${warningTag.url}`,
+      'clicktag-naming-convention'
+    ));
+  }
+  
+  // Issue "No clickTags found" error only if BOTH validTags and warningTags are empty
+  if (clickTagAnalysis.validTags.length === 0 && clickTagAnalysis.warningTags.length === 0 && analysis.htmlContent) {
     let detailsForClickTagError: string | undefined = undefined;
-    // Regex for <script ... src="...Enabler.js..." ...>
     const enablerScriptRegex = /<script[^>]*src\s*=\s*['"][^'"]*enabler\.js[^'"]*['"][^>]*>/i;
 
     if (analysis.htmlContent && enablerScriptRegex.test(analysis.htmlContent)) {
       detailsForClickTagError = "This creative might be designed for Google Ad Manager (formerly DoubleClick Studio/DCS) as 'Enabler.js' is present. This validator is not intended for creatives relying on Enabler.js for clickTag functionality, as they handle clickTags differently.";
     }
     issues.push(createIssuePageClient('error', 'No clickTags found or clickTag implementation is missing/invalid.', detailsForClickTagError));
-  } else {
-    for (const tag of detectedClickTags) {
-      if (!tag.isHttps) {
-        issues.push(createIssuePageClient('warning', `ClickTag '${tag.name}' uses non-HTTPS URL.`, `URL: ${tag.url}`));
-      }
-    }
   }
+
 
   for (const missing of analysis.missingAssets) {
     let message = "";
@@ -498,7 +538,7 @@ const buildValidationResult = async (
     issues,
     adDimensions,
     fileStructureOk,
-    detectedClickTags: detectedClickTags.length > 0 ? detectedClickTags : undefined,
+    detectedClickTags: detectedClickTagsForReport.length > 0 ? detectedClickTagsForReport : undefined,
     maxFileSize: MAX_FILE_SIZE,
     // htmlContent: analysis.htmlContent, // Not strictly needed for validation
   };
