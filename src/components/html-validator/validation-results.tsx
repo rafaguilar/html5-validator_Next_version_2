@@ -258,12 +258,12 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
 
           const sortedIssues = [...result.issues].sort((a, b) => {
             if (a.type === 'error' && b.type === 'warning') {
-              return -1; // a (error) comes before b (warning)
+              return -1;
             }
             if (a.type === 'warning' && b.type === 'error') {
-              return 1; // b (error) comes before a (warning)
+              return 1;
             }
-            return 0; // maintain original order for same types
+            return 0;
           });
 
           return (
@@ -289,11 +289,15 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
                       <ImageIconLucide className="w-5 h-5 text-primary mr-3 mt-0.5 flex-shrink-0" />
                       <div>
                         <p className="font-medium text-foreground">Ad Dimensions</p>
+                        {result.adDimensions.actual ? (
+                          <p className="text-muted-foreground">
+                            Meta Tag: {result.adDimensions.actual.width}x{result.adDimensions.actual.height}px
+                          </p>
+                        ) : (
+                          <p className="text-muted-foreground">Meta Tag: Not found or invalid values</p>
+                        )}
                         <p className="text-muted-foreground">
-                          {result.adDimensions.actual ?
-                           `Detected: ${result.adDimensions.actual.width}x${result.adDimensions.actual.height}px ` : ''}
-                           {(result.adDimensions.width && result.adDimensions.height && (!result.adDimensions.actual || (result.adDimensions.actual.width !== result.adDimensions.width || result.adDimensions.actual.height !== result.adDimensions.height))) ?
-                           `(Expected: ${result.adDimensions.width}x${result.adDimensions.height}px)`: result.adDimensions.actual ? '' : 'Not specified'}
+                          Effective: {result.adDimensions.width}x{result.adDimensions.height}px
                         </p>
                       </div>
                     </div>
@@ -303,7 +307,7 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
                       {result.fileStructureOk ? <CheckCircle2 className="w-5 h-5 text-green-500 mr-3 mt-0.5 flex-shrink-0" /> : <XCircle className="w-5 h-5 text-destructive mr-3 mt-0.5 flex-shrink-0" />}
                       <div>
                         <p className="font-medium text-foreground">File Structure</p>
-                        <p className="text-muted-foreground">{result.fileStructureOk ? 'Valid' : 'Invalid'}</p>
+                        <p className="text-muted-foreground">{result.fileStructureOk ? 'Valid (HTML found)' : 'Invalid (HTML not found)'}</p>
                       </div>
                     </div>
                   )}
@@ -326,7 +330,7 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
                 {result.detectedClickTags && result.detectedClickTags.length > 0 && (
                   <div>
                     <h4 className="text-md font-medium text-foreground mb-2 flex items-center">
-                      <LinkIcon className="w-4 h-4 mr-2 text-primary" /> Detected ClickTags:
+                      <LinkIcon className="w-4 h-4 mr-2 text-primary" /> Detected ClickTags (from inline scripts):
                     </h4>
                     <ul className="list-disc list-inside pl-4 space-y-1 text-sm bg-secondary/30 p-3 rounded-md">
                       {result.detectedClickTags.map(ct => (
@@ -342,7 +346,7 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
                 {result.hasCorrectTopLevelClickTag && (
                   <div className="mt-2 text-sm text-green-600 flex items-center p-3 bg-green-500/10 rounded-md">
                     <CheckCircle2 className="w-5 h-5 mr-2 flex-shrink-0 text-green-500" />
-                    Correct top-level clickTag (named 'clickTag' with HTTPS URL) detected.
+                    Correct top-level clickTag (named 'clickTag' with HTTPS URL) detected in inline script.
                   </div>
                 )}
 
@@ -373,7 +377,7 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
                 {result.issues.length === 0 && result.status !== 'pending' && result.status !== 'validating' && !result.hasCorrectTopLevelClickTag && (
                   <div className="text-sm text-green-600 flex items-center p-3 bg-green-500/10 rounded-md">
                     <CheckCircle2 className="w-5 h-5 mr-2 flex-shrink-0 text-green-500"/>
-                    No issues found. This creative meets the requirements.
+                    No issues found. However, a standard top-level 'clickTag' with HTTPS was not detected in inline scripts.
                   </div>
                 )}
                  {result.issues.length === 0 && result.status === 'success' && result.hasCorrectTopLevelClickTag && (
@@ -403,15 +407,17 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
       {results.length > 0 && !results.some(r => r.status === 'pending' || r.status === 'validating') && (
         <div className="mt-8 pt-6 border-t border-border text-muted-foreground text-xs">
           <h5 className="font-semibold text-sm mb-2 text-foreground">ClickTag Identification Limitations:</h5>
-          <p className="mb-1">Identification of clickTags via HTML parsing may fail for:</p>
+          <p className="mb-1">Identification of clickTags from inline HTML scripts may fail for:</p>
           <ul className="list-disc list-inside pl-4 space-y-0.5">
             <li>Minified or obfuscated JavaScript.</li>
             <li>ClickTag URLs constructed dynamically (e.g., from multiple variables).</li>
             <li>More complex JavaScript assignment patterns.</li>
             <li>ClickTags defined in ways other than simple variable assignments.</li>
+            <li>ClickTags defined in external .js files (these are not parsed for clickTags by this validator).</li>
           </ul>
         </div>
       )}
     </div>
   );
 }
+
