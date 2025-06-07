@@ -292,8 +292,8 @@ const findClickTagsInHtml = (htmlContent: string | null): ClickTagInfo[] => {
 
   // Regex for: clickTag, clickTagN (N is one or more digits)
   // Case-sensitive for "clickTag"
-  // Captures URL wrapped in single or double quotes
-  const clickTagRegex = /(?:var|let|const)\s+(clickTag\d*)\s*=\s*(["'])((?:https?:\/\/).+?)\2/gi;
+  // Captures URL wrapped in single or double quotes, robustly handling URL content.
+  const clickTagRegex = /(?:var|let|const)\s+(clickTag\d*)\s*=\s*(["'])((?:https?:\/\/)(?:(?!\2).)*?)\2/gi;
   let matchInstance;
   while ((matchInstance = clickTagRegex.exec(scriptContent)) !== null) {
     const name = matchInstance[1];
