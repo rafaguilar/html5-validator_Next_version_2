@@ -301,8 +301,8 @@ const findClickTagsInHtml = (htmlContent: string | null): ClickTagAnalysisResult
   const validTagNames = new Set<string>();
 
   // First pass: Strict, case-sensitive for valid clickTags
-  // Formats: clickTag, clickTag#, clickTag_#, clickTag-#
-  const strictRegex = /(?:var|let|const)\s+(clickTag(?:(?:_|-)?\d+)?)\s*=\s*["'](http[^"']+)["']/g;
+  // Formats: clickTag, clickTag#, clickTag_#
+  const strictRegex = /(?:var|let|const)\s+(clickTag(?:_?\d+)?)\s*=\s*["'](http[^"']+)["']/g;
   let strictMatchInstance;
   while ((strictMatchInstance = strictRegex.exec(scriptContent)) !== null) {
     const name = strictMatchInstance[1];
@@ -396,7 +396,7 @@ const buildValidationResult = async (
     issues.push(createIssuePageClient(
       'warning',
       `Potentially non-standard clickTag naming: '${warningTag.name}'.`,
-      `The standard format is 'clickTag' or 'clickTag' followed by a number (e.g., clickTag1, clickTag_2, clickTag-3). URL found: ${warningTag.url}`,
+      `The standard format is 'clickTag' or 'clickTag' followed by a number (e.g., clickTag1, clickTag_2). URL found: ${warningTag.url}`,
       'clicktag-naming-convention'
     ));
   }
