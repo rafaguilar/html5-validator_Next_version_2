@@ -333,8 +333,6 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
                     referencedAssetPaths.add(assetPath);
                     if (assetPath.toLowerCase().endsWith('.js')) {
                         // Check if it's a non-CDN (local) script
-                        // This simplistic check assumes CDNs are absolute, local are relative.
-                        // A more robust check might involve a list of CDN hostnames.
                         hasNonCdnExternalScripts = true; 
                     }
                 } else { // Missing local script
@@ -346,8 +344,6 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
                     });
                 }
             }
-            // External CDNs or data URIs are not considered for `hasNonCdnExternalScripts`
-            // unless we want to refine this (e.g. some CDNs are fine, others not)
         }
     }
     
@@ -361,7 +357,6 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
     return { missingAssets, unreferencedFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, hasNonCdnExternalScripts };
 
   } catch (error: any) {
-    // console.error(`Error analyzing assets for ${file.name}:`, error);
     cssLintIssues.push(createIssuePageClient('error', `Critical error analyzing ZIP file ${file.name}.`, error.message, 'zip-analysis-error'));
     return { missingAssets, unreferencedFiles: [], foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, hasNonCdnExternalScripts };
   }
@@ -371,7 +366,7 @@ const findClickTagsInHtml = (htmlContent: string | null): ClickTagInfo[] => {
   if (!htmlContent) return [];
 
   const clickTags: ClickTagInfo[] = [];
-  // Regex from user's provided working version
+  // Regex from user's provided working version (Netlify stable)
   const clickTagRegex = /(?:^|[\s;,\{\(])\s*(?:(?:var|let|const)\s+)?(?:window\.)?([a-zA-Z0-9_]*clickTag[a-zA-Z0-9_]*)\s*=\s*["'](http[^"']+)["']/gmi;
   
   let scriptContent = "";
@@ -383,7 +378,7 @@ const findClickTagsInHtml = (htmlContent: string | null): ClickTagInfo[] => {
 
   let match;
   while ((match = clickTagRegex.exec(scriptContent)) !== null) {
-    const name = match[1];
+    const name = match[1]; 
     const url = match[2]; // In this regex, URL is group 2
     clickTags.push({
       name,
@@ -516,18 +511,35 @@ const buildValidationResult = async (
     const metaTagMatch = analysis.htmlContent.match(metaTagRegex);
     if (metaTagMatch && metaTagMatch[1]) {
       adSizeMetaTagContent = metaTagMatch[1];
-      const metaDimMatch = adSizeMetaTagContent.match(/width=(\d+)[,;]?\s*height=(\d+)/i);
-      if (metaDimMatch && metaDimMatch[1] && metaDimMatch[2]) {
-        const wVal = parseInt(metaDimMatch[1], 10);
-        const hVal = parseInt(metaDimMatch[2], 10);
-        if (!isNaN(wVal) && !isNaN(hVal)) {
-          actualMetaWidth = wVal;
-          actualMetaHeight = hVal;
+      const metaDimRegex = /width=([^,;\s"]+)[,;]?\s*height=([^,;\s"]+)/i; // More flexible capture
+      const metaDimValMatch = adSizeMetaTagContent.match(metaDimRegex);
+
+      if (metaDimValMatch && metaDimValMatch[1] && metaDimValMatch[2]) {
+        const widthStr = metaDimValMatch[1];
+        const heightStr = metaDimValMatch[2];
+
+        const parsedWidth = parseInt(widthStr, 10);
+        const parsedHeight = parseInt(heightStr, 10);
+
+        const isWidthValid = !isNaN(parsedWidth) && parsedWidth.toString() === widthStr;
+        const isHeightValid = !isNaN(parsedHeight) && parsedHeight.toString() === heightStr;
+
+        if (isWidthValid && isHeightValid) {
+          actualMetaWidth = parsedWidth;
+          actualMetaHeight = parsedHeight;
         } else {
-           issues.push(createIssuePageClient('error', 'Invalid numeric values in ad.size meta tag.', `Parsed non-numeric values from: "${adSizeMetaTagContent}"`));
+           issues.push(createIssuePageClient(
+               'error', 
+               'Invalid numeric values in ad.size meta tag.', 
+               `Content: "${adSizeMetaTagContent}". Width and height must be whole numbers. Found: width='${widthStr}', height='${heightStr}'.`
+            ));
         }
       } else {
-         issues.push(createIssuePageClient('error', 'Malformed ad.size meta tag content.', `Content: "${adSizeMetaTagContent}". Expected "width=XXX,height=YYY".`));
+         issues.push(createIssuePageClient(
+             'error', 
+             'Malformed ad.size meta tag content.', 
+             `Content: "${adSizeMetaTagContent}". Expected "width=XXX,height=YYY".`
+        ));
       }
     } else {
       if (filenameIntrinsicWidth !== undefined && filenameIntrinsicHeight !== undefined) {
@@ -714,3 +726,6 @@ export default function HomePage() {
     </div>
   );
 }
+
+
+    
