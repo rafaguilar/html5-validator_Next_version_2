@@ -279,57 +279,32 @@ const analyzeCreativeAssets = async (file: File): Promise<{
   }
 };
 
-interface ClickTagAnalysisResult {
-  validTags: ClickTagInfo[];
-  warningTags: Array<{ name: string; url: string }>;
-}
-
-const findClickTagsInHtml = (htmlContent: string | null): ClickTagAnalysisResult => {
-  const result: ClickTagAnalysisResult = {
-    validTags: [],
-    warningTags: [],
-  };
-  if (!htmlContent) return result;
+const findClickTagsInHtml = (htmlContent: string | null): ClickTagInfo[] => {
+  if (!htmlContent) return [];
+  const clickTags: ClickTagInfo[] = [];
 
   let scriptContent = "";
   const scriptTagRegex = /<script[^>]*>([\s\S]*?)<\/script>/gi;
   let scriptMatch;
   while((scriptMatch = scriptTagRegex.exec(htmlContent)) !== null) {
-    scriptContent += scriptMatch[1] + "\n"; 
+    scriptContent += scriptMatch[1] + "\n";
   }
 
-  const validTagNames = new Set<string>();
-
-  // First pass: Strict, case-sensitive for valid clickTags
-  // Formats: clickTag, clickTag#, clickTag_#
-  // Group 1: clickTag name, Group 3: URL (Group 2 is the quote)
-  const strictRegex = /(?:var|let|const)\s+(clickTag(?:_?\d+)?)\s*=\s*(["'])((?:https?:\/\/).+?)\2/g;
-  let strictMatchInstance;
-  while ((strictMatchInstance = strictRegex.exec(scriptContent)) !== null) {
-    const name = strictMatchInstance[1];
-    const url = strictMatchInstance[3];
-    result.validTags.push({
+  // Regex for: clickTag, clickTagN (N is one or more digits)
+  // Case-sensitive for "clickTag"
+  // Captures URL wrapped in single or double quotes
+  const clickTagRegex = /(?:var|let|const)\s+(clickTag\d*)\s*=\s*(["'])((?:https?:\/\/).+?)\2/gi;
+  let matchInstance;
+  while ((matchInstance = clickTagRegex.exec(scriptContent)) !== null) {
+    const name = matchInstance[1];
+    const url = matchInstance[3];
+    clickTags.push({
       name,
       url,
       isHttps: url.startsWith('https://'),
     });
-    validTagNames.add(name);
   }
-
-  // Second pass: Broader, case-insensitive for warnings on non-standard names
-  // Catches things like "ClickTag", "myClickTag", "clicktag_custom" etc.
-  // Group 1: clickTag name, Group 3: URL (Group 2 is the quote)
-  const warningRegex = /(?:var|let|const)\s+([a-zA-Z0-9_]*clickTag[a-zA-Z0-9_]*)\s*=\s*(["'])((?:https?:\/\/).+?)\2/gi;
-  let warningMatchInstance;
-  while ((warningMatchInstance = warningRegex.exec(scriptContent)) !== null) {
-    const name = warningMatchInstance[1];
-    const url = warningMatchInstance[3];
-    if (!validTagNames.has(name)) { // Only add if not already a validly named tag
-      result.warningTags.push({ name, url });
-    }
-  }
-  
-  return result;
+  return clickTags;
 };
 
 
@@ -382,28 +357,17 @@ const buildValidationResult = async (
     issues.push(createIssuePageClient('error', `File size exceeds limit (${(MAX_FILE_SIZE / 1024).toFixed(0)}KB).`));
   }
 
-  const clickTagAnalysis = findClickTagsInHtml(analysis.htmlContent || null);
-  const detectedClickTagsForReport: ClickTagInfo[] = clickTagAnalysis.validTags;
+  const detectedClickTagsForReport = findClickTagsInHtml(analysis.htmlContent || null);
 
-  // Process valid clickTags for HTTPS warnings
+  // Process clickTags for HTTPS warnings
   for (const tag of detectedClickTagsForReport) {
     if (!tag.isHttps) {
       issues.push(createIssuePageClient('warning', `ClickTag '${tag.name}' uses non-HTTPS URL.`, `URL: ${tag.url}`));
     }
   }
-
-  // Process non-standard clickTag names for warnings
-  for (const warningTag of clickTagAnalysis.warningTags) {
-    issues.push(createIssuePageClient(
-      'warning',
-      `Potentially non-standard clickTag naming: '${warningTag.name}'.`,
-      `The standard format is 'clickTag' or 'clickTag' followed by a number (e.g., clickTag1, clickTag_2). URL found: ${warningTag.url}`,
-      'clicktag-naming-convention'
-    ));
-  }
   
-  // Issue "No clickTags found" error only if BOTH validTags and warningTags are empty
-  if (clickTagAnalysis.validTags.length === 0 && clickTagAnalysis.warningTags.length === 0 && analysis.htmlContent) {
+  // Issue "No clickTags found" error
+  if (detectedClickTagsForReport.length === 0 && analysis.htmlContent) {
     let detailsForClickTagError: string | undefined = undefined;
     const enablerScriptRegex = /<script[^>]*src\s*=\s*['"][^'"]*enabler\.js[^'"]*['"][^>]*>/i;
 
