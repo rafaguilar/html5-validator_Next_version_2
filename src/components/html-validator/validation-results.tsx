@@ -256,6 +256,16 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
             badgeTextClass = 'text-accent-foreground';
           }
 
+          const sortedIssues = [...result.issues].sort((a, b) => {
+            if (a.type === 'error' && b.type === 'warning') {
+              return -1; // a (error) comes before b (warning)
+            }
+            if (a.type === 'warning' && b.type === 'error') {
+              return 1; // b (error) comes before a (warning)
+            }
+            return 0; // maintain original order for same types
+          });
+
           return (
             <Card key={result.id} className="shadow-lg overflow-hidden mb-6">
               <CardHeader className={`flex flex-row items-center justify-between space-y-0 p-4 ${headerBgClass} ${headerTextClass}`}>
@@ -337,12 +347,12 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
                 )}
 
 
-                {result.issues.length > 0 && (
+                {sortedIssues.length > 0 && (
                   <div>
-                    <h4 className="text-md font-medium text-foreground mb-2">Issues Found ({result.issues.length}):</h4>
+                    <h4 className="text-md font-medium text-foreground mb-2">Issues Found ({sortedIssues.length}):</h4>
                     <ScrollArea className="h-[200px] w-full rounded-md border">
                     <Accordion type="multiple" className="w-full bg-card">
-                      {result.issues.map(issue => (
+                      {sortedIssues.map(issue => (
                         <AccordionItem value={issue.id} key={issue.id}>
                           <AccordionTrigger className="px-4 py-3 text-sm hover:bg-muted/50 transition-colors">
                             <div className="flex items-center">
