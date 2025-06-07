@@ -1,3 +1,4 @@
+
 "use client";
 
 import type { ChangeEvent, DragEvent } from 'react';
@@ -96,7 +97,7 @@ export function FileUploader({ selectedFiles, setSelectedFiles, onValidate, isLo
             className="hidden"
             onChange={handleFileChange}
           />
-          <p className="text-xs text-muted-foreground mt-2">Only .zip files are accepted.</p>
+          <p className="text-xs text-muted-foreground mt-2">Upload each banner as a separate .zip file. (Do not zip multiple banners together.)</p>
         </div>
 
         {selectedFiles.length > 0 && (
