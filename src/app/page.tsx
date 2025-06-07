@@ -302,11 +302,13 @@ const findClickTagsInHtml = (htmlContent: string | null): ClickTagAnalysisResult
 
   // First pass: Strict, case-sensitive for valid clickTags
   // Formats: clickTag, clickTag#, clickTag_#
-  const strictRegex = /(?:var|let|const)\s+(clickTag(?:_?\d+)?)\s*=\s*["'](http[^"']+)["']/g;
+  // Regex ensures matching quotes (single or double) around the URL.
+  // Group 1: clickTag name, Group 3: URL
+  const strictRegex = /(?:var|let|const)\s+(clickTag(?:_?\d+)?)\s*=\s*(["'])((?:https?:\/\/)[^\s"']+?)\2/g;
   let strictMatchInstance;
   while ((strictMatchInstance = strictRegex.exec(scriptContent)) !== null) {
     const name = strictMatchInstance[1];
-    const url = strictMatchInstance[2];
+    const url = strictMatchInstance[3];
     result.validTags.push({
       name,
       url,
@@ -317,11 +319,13 @@ const findClickTagsInHtml = (htmlContent: string | null): ClickTagAnalysisResult
 
   // Second pass: Broader, case-insensitive for warnings on non-standard names
   // Catches things like "ClickTag", "myClickTag", "clicktag_custom" etc.
-  const warningRegex = /(?:var|let|const)\s+([a-zA-Z0-9_]*clickTag[a-zA-Z0-9_]*)\s*=\s*["'](http[^"']+)["']/gi;
+  // Also ensures matching quotes and that URL starts with http/https.
+  // Group 1: clickTag name, Group 3: URL
+  const warningRegex = /(?:var|let|const)\s+([a-zA-Z0-9_]*clickTag[a-zA-Z0-9_]*)\s*=\s*(["'])((?:https?:\/\/)[^\s"']+?)\2/gi;
   let warningMatchInstance;
   while ((warningMatchInstance = warningRegex.exec(scriptContent)) !== null) {
     const name = warningMatchInstance[1];
-    const url = warningMatchInstance[2];
+    const url = warningMatchInstance[3];
     // If not already captured by the strict (case-sensitive and format-specific) check
     if (!validTagNames.has(name)) {
       result.warningTags.push({ name, url });
