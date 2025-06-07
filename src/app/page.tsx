@@ -28,6 +28,17 @@ interface MissingAssetInfo {
   originalSrc: string;
 }
 
+// Interface for the result of analyzeCreativeAssets
+interface CreativeAssetAnalysis {
+  missingAssets: MissingAssetInfo[];
+  unreferencedFiles: string[];
+  foundHtmlPath?: string;
+  htmlContent?: string;
+  cssLintIssues: ValidationIssue[];
+  hasNonCdnExternalScripts: boolean;
+}
+
+
 const createIssuePageClient = (type: 'error' | 'warning', message: string, details?: string, rule?: string): ValidationIssue => ({
   id: `issue-page-client-${Math.random().toString(36).substr(2, 9)}`,
   type,
@@ -218,19 +229,14 @@ const processCssContentAndCollectReferences = async (
   }
 };
 
-const analyzeCreativeAssets = async (file: File): Promise<{
-  missingAssets: MissingAssetInfo[],
-  unreferencedFiles: string[],
-  foundHtmlPath?: string,
-  htmlContent?: string,
-  cssLintIssues: ValidationIssue[],
-}> => {
+const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis> => {
   const missingAssets: MissingAssetInfo[] = [];
   const referencedAssetPaths = new Set<string>();
   const cssLintIssues: ValidationIssue[] = [];
   let foundHtmlPath: string | undefined;
   let htmlContentForAnalysis: string | undefined;
   let zipBaseDir = ''; // To help resolve paths like 'css/style.css' if HTML is in root
+  let hasNonCdnExternalScripts = false; // Flag for external JS files
 
   try {
     const zip = await JSZip.loadAsync(file);
@@ -240,7 +246,7 @@ const analyzeCreativeAssets = async (file: File): Promise<{
 
     if (!htmlFile) {
       // console.warn(`[analyzeCreativeAssets] No HTML file found in ${file.name}. All files will be marked as unreferenced.`);
-      return { missingAssets, unreferencedFiles: allZipFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues };
+      return { missingAssets, unreferencedFiles: allZipFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, hasNonCdnExternalScripts };
     }
 
     foundHtmlPath = htmlFile.path;
@@ -317,22 +323,27 @@ const analyzeCreativeAssets = async (file: File): Promise<{
     const scriptElements = Array.from(doc.querySelectorAll('script[src]'));
     for (const el of scriptElements) {
         const srcAttr = el.getAttribute('src');
-        // Allow absolute URLs for CDNs like GSAP
-        if (srcAttr && !srcAttr.startsWith('http:') && !srcAttr.startsWith('https:')) {
-            const assetPath = resolveAssetPathInZip(srcAttr, foundHtmlPath, zip);
-            if (assetPath && zip.file(assetPath)) {
-                referencedAssetPaths.add(assetPath);
-            } else {
-                 missingAssets.push({
-                    type: 'htmlScript',
-                    path: srcAttr,
-                    referencedFrom: foundHtmlPath,
-                    originalSrc: srcAttr
-                });
+        if (srcAttr) {
+            const isExternalUrl = srcAttr.startsWith('http:') || srcAttr.startsWith('https:') || srcAttr.startsWith('//');
+            const isDataUri = srcAttr.startsWith('data:');
+
+            if (!isExternalUrl && !isDataUri) { // Local script file
+                const assetPath = resolveAssetPathInZip(srcAttr, foundHtmlPath, zip);
+                if (assetPath && zip.file(assetPath)) {
+                    referencedAssetPaths.add(assetPath);
+                    if (assetPath.toLowerCase().endsWith('.js')) {
+                        hasNonCdnExternalScripts = true;
+                    }
+                } else { // Missing local script
+                     missingAssets.push({
+                        type: 'htmlScript',
+                        path: srcAttr,
+                        referencedFrom: foundHtmlPath, // `foundHtmlPath` is guaranteed to be defined if we reach here
+                        originalSrc: srcAttr
+                    });
+                }
             }
-        } else if (srcAttr && (srcAttr.startsWith('http:') || srcAttr.startsWith('https:'))) {
-            // Assume external scripts are "referenced" for completeness, though we don't check their existence
-            // Or, decide not to add them to referencedAssetPaths if we only care about local assets
+            // External CDNs or data URIs are not considered for `hasNonCdnExternalScripts`
         }
     }
     
@@ -343,13 +354,12 @@ const analyzeCreativeAssets = async (file: File): Promise<{
         }
     });
 
-    return { missingAssets, unreferencedFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues };
+    return { missingAssets, unreferencedFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, hasNonCdnExternalScripts };
 
   } catch (error: any) {
     // console.error(`Error analyzing assets for ${file.name}:`, error);
-    // In case of critical error (e.g. corrupt ZIP), mark all files as unreferenced or add a global error
     cssLintIssues.push(createIssuePageClient('error', `Critical error analyzing ZIP file ${file.name}.`, error.message, 'zip-analysis-error'));
-    return { missingAssets, unreferencedFiles: [], foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues };
+    return { missingAssets, unreferencedFiles: [], foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, hasNonCdnExternalScripts };
   }
 };
 
@@ -357,7 +367,7 @@ const findClickTagsInHtml = (htmlContent: string | null): ClickTagInfo[] => {
   if (!htmlContent) return [];
 
   const clickTags: ClickTagInfo[] = [];
-  const clickTagRegex = /(?:^|[\s;,\{\(])\s*(?:(?:var|let|const)\s+)?(?:window\.)?([a-zA-Z0-9_]*clickTag[a-zA-Z0-9_]*)\s*=\s*["'](http[^"']+)["']/gmi;
+  const clickTagRegex = /(?:^|[\s;,\{\(])\s*(?:(?:var|let|const)\s+)?(?:window\.)?([a-zA-Z0-9_]*clickTag[a-zA-Z0-9_]*)\s*=\s*(["'])((?:https?:\/\/).+?)\2/gmi;
   
   let scriptContent = "";
   const scriptTagRegex = /<script[^>]*>([\s\S]*?)<\/script>/gi;
@@ -369,7 +379,7 @@ const findClickTagsInHtml = (htmlContent: string | null): ClickTagInfo[] => {
   let match;
   while ((match = clickTagRegex.exec(scriptContent)) !== null) {
     const name = match[1];
-    const url = match[2];
+    const url = match[3]; // Group 3 now correctly captures the URL
     clickTags.push({
       name,
       url,
@@ -413,13 +423,7 @@ const lintHtmlContent = (htmlString: string): ValidationIssue[] => {
 
 const buildValidationResult = async (
   file: File,
-  analysis: {
-    missingAssets: MissingAssetInfo[],
-    unreferencedFiles: string[],
-    foundHtmlPath?: string,
-    htmlContent?: string,
-    cssLintIssues: ValidationIssue[],
-  }
+  analysis: CreativeAssetAnalysis
 ): Promise<Omit<ValidationResult, 'id' | 'fileName' | 'fileSize'>> => {
   const issues: ValidationIssue[] = [];
   let status: ValidationResult['status'] = 'success';
@@ -428,18 +432,28 @@ const buildValidationResult = async (
     issues.push(createIssuePageClient('error', `File size exceeds limit (${(MAX_FILE_SIZE / 1024).toFixed(0)}KB).`));
   }
 
-  const detectedClickTagsForReport = findClickTagsInHtml(analysis.htmlContent || null);
+  const detectedClickTags = findClickTagsInHtml(analysis.htmlContent || null);
 
-  if (detectedClickTagsForReport.length === 0 && analysis.htmlContent) {
+  if (detectedClickTags.length === 0 && analysis.htmlContent) { 
     let detailsForClickTagError: string | undefined = undefined;
     const enablerScriptRegex = /<script[^>]*src\s*=\s*['"][^'"]*enabler\.js[^'"]*['"][^>]*>/i;
 
     if (analysis.htmlContent && enablerScriptRegex.test(analysis.htmlContent)) {
       detailsForClickTagError = "This creative might be designed for Google Ad Manager (formerly DoubleClick Studio/DCS) as 'Enabler.js' is present. This validator is not intended for creatives relying on Enabler.js for clickTag functionality, as they handle clickTags differently.";
     }
-    issues.push(createIssuePageClient('error', 'No clickTags found or clickTag implementation is missing/invalid.', detailsForClickTagError));
+     issues.push(createIssuePageClient('error', 'No clickTags found or clickTag implementation is missing/invalid.', detailsForClickTagError));
+
+    if (analysis.hasNonCdnExternalScripts) {
+        issues.push(createIssuePageClient(
+            'warning',
+            'clickTag declaration recommended in inline HTML script.',
+            'The clickTag declaration was not found in inline <script> tags. If it\'s defined in an external JS file, consider moving it. Best practice is to place the clickTag variable (e.g., var clickTag = "URL";) within an inline <script> tag, preferably in the HTML <head>.',
+            'clicktag-inline-script-preferred'
+        ));
+    }
+
   } else {
-    for (const tag of detectedClickTagsForReport) {
+    for (const tag of detectedClickTags) {
       if (!tag.isHttps) {
         issues.push(createIssuePageClient('warning', `ClickTag '${tag.name}' uses non-HTTPS URL.`, `URL: ${tag.url}`));
       }
@@ -575,7 +589,7 @@ const buildValidationResult = async (
     issues,
     adDimensions,
     fileStructureOk,
-    detectedClickTags: detectedClickTagsForReport.length > 0 ? detectedClickTagsForReport : undefined,
+    detectedClickTags: detectedClickTags.length > 0 ? detectedClickTags : undefined,
     maxFileSize: MAX_FILE_SIZE,
   };
 };
