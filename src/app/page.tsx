@@ -356,8 +356,15 @@ const buildValidationResult = async (
 
   const detectedClickTags = findClickTagsInHtml(analysis.htmlContent || null);
 
-  if (detectedClickTags.length === 0 && analysis.htmlContent) { 
-     issues.push(createIssuePageClient('error', 'No clickTags found or clickTag implementation is missing/invalid.'));
+  if (detectedClickTags.length === 0 && analysis.htmlContent) {
+    let detailsForClickTagError: string | undefined = undefined;
+    // Regex for <script ... src="...Enabler.js..." ...>
+    const enablerScriptRegex = /<script[^>]*src\s*=\s*['"][^'"]*enabler\.js[^'"]*['"][^>]*>/i;
+
+    if (analysis.htmlContent && enablerScriptRegex.test(analysis.htmlContent)) {
+      detailsForClickTagError = "This creative might be designed for Google Ad Manager (formerly DoubleClick Studio/DCS) as 'Enabler.js' is present. This validator is not intended for creatives relying on Enabler.js for clickTag functionality, as they handle clickTags differently.";
+    }
+    issues.push(createIssuePageClient('error', 'No clickTags found or clickTag implementation is missing/invalid.', detailsForClickTagError));
   } else {
     for (const tag of detectedClickTags) {
       if (!tag.isHttps) {
