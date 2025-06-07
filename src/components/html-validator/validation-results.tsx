@@ -265,6 +265,46 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
             }
             return 0;
           });
+          
+          let dimensionExplanation: React.ReactNode = null;
+          if (result.adDimensions && !result.adDimensions.actual) { // Meta tag was not found or was invalid
+            const errorDimensionRuleIds = [
+              'meta-size-invalid-values',
+              'meta-size-malformed-content',
+              'meta-size-missing-no-filename',
+              'meta-size-no-html-no-filename',
+              'meta-size-fallback-guess',
+              'meta-size-defaulted'
+            ];
+            const warningDimensionRuleIds = [
+              'meta-size-missing-inferred-filename',
+              'meta-size-no-html-inferred-filename'
+            ];
+
+            const hasErrorIssue = result.issues.find(
+              issue => issue.type === 'error' && issue.rule && errorDimensionRuleIds.includes(issue.rule)
+            );
+            const hasWarningIssue = result.issues.find(
+              issue => issue.type === 'warning' && issue.rule && warningDimensionRuleIds.includes(issue.rule)
+            );
+
+            if (hasErrorIssue) {
+              dimensionExplanation = (
+                <p className="text-xs text-destructive flex items-center mt-1">
+                  <XCircle className="w-3 h-3 mr-1 flex-shrink-0" />
+                  Effective dimensions from fallback/filename due to meta tag error.
+                </p>
+              );
+            } else if (hasWarningIssue) {
+              dimensionExplanation = (
+                <p className="text-xs text-accent flex items-center mt-1">
+                  <AlertTriangle className="w-3 h-3 mr-1 flex-shrink-0" />
+                  Effective dimensions inferred from filename as meta tag was missing.
+                </p>
+              );
+            }
+          }
+
 
           return (
             <Card key={result.id} className="shadow-lg overflow-hidden mb-6">
@@ -299,6 +339,7 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
                         <p className="text-muted-foreground">
                           Effective: {result.adDimensions.width}x{result.adDimensions.height}px
                         </p>
+                        {dimensionExplanation}
                       </div>
                     </div>
                   )}
@@ -420,4 +461,3 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
     </div>
   );
 }
-

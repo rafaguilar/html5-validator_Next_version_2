@@ -348,7 +348,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
     
     const unreferencedFiles: string[] = [];
     allZipFiles.forEach(filePathInZip => {
-        if (!referencedAssetPaths.has(filePathInZip) && !allHtmlFilePathsInZip.includes(filePathInZip)) { // Ensure HTML files aren't marked unreferenced if they are the primary
+        if (!referencedAssetPaths.has(filePathInZip) && !allHtmlFilePathsInZip.includes(filePathInZip)) { 
             unreferencedFiles.push(filePathInZip);
         } else if (allHtmlFilePathsInZip.includes(filePathInZip) && filePathInZip !== foundHtmlPath && htmlFileCount > 1) {
             // If it's an HTML file, not the primary one, and there are multiple HTML files, it could be considered unreferenced by primary
@@ -368,7 +368,10 @@ const findClickTagsInHtml = (htmlContent: string | null): ClickTagInfo[] => {
   if (!htmlContent) return [];
 
   const clickTags: ClickTagInfo[] = [];
+  // Regex from provided file: /(?:^|[\s;,\{\(])\s*(?:(?:var|let|const)\s+)?(?:window\.)?([a-zA-Z0-9_]*clickTag[a-zA-Z0-9_]*)\s*=\s*["'](http[^"']+)["']/gmi;
+  // Using the more robust one we developed:
   const clickTagRegex = /(?:^|[\s;,\{\(])\s*(?:(?:var|let|const)\s+)?(?:window\.)?([a-zA-Z0-9_]*clickTag[a-zA-Z0-9_]*)\s*=\s*(["'])((?:https?:\/\/)(?:(?!\2).)*?)\2/gmi;
+
 
   let scriptContent = "";
   const scriptTagRegex = /<script[^>]*>([\s\S]*?)<\/script>/gi;
@@ -380,7 +383,7 @@ const findClickTagsInHtml = (htmlContent: string | null): ClickTagInfo[] => {
   let match;
   while ((match = clickTagRegex.exec(scriptContent)) !== null) {
     const name = match[1]; 
-    const url = match[3]; 
+    const url = match[3]; // Group 3 for URL with the robust regex
     clickTags.push({
       name,
       url,
@@ -541,32 +544,34 @@ const buildValidationResult = async (
            issues.push(createIssuePageClient(
                'error', 
                'Invalid numeric values in ad.size meta tag.', 
-               `Content: "${adSizeMetaTagContent}". Width and height must be whole numbers. Found: width='${widthStr}', height='${heightStr}'.`
+               `Content: "${adSizeMetaTagContent}". Width and height must be whole numbers. Found: width='${widthStr}', height='${heightStr}'.`,
+               'meta-size-invalid-values'
             ));
         }
       } else {
          issues.push(createIssuePageClient(
              'error', 
              'Malformed ad.size meta tag content.', 
-             `Content: "${adSizeMetaTagContent}". Expected "width=XXX,height=YYY".`
+             `Content: "${adSizeMetaTagContent}". Expected "width=XXX,height=YYY".`,
+             'meta-size-malformed-content'
         ));
       }
     } else {
       if (filenameIntrinsicWidth !== undefined && filenameIntrinsicHeight !== undefined) {
         actualMetaWidth = filenameIntrinsicWidth;
         actualMetaHeight = filenameIntrinsicHeight;
-        issues.push(createIssuePageClient('warning', 'Required ad.size meta tag not found in HTML. Dimensions inferred from filename.', 'Ensure <meta name="ad.size" content="width=XXX,height=YYY"> is present.'));
+        issues.push(createIssuePageClient('warning', 'Required ad.size meta tag not found in HTML. Dimensions inferred from filename.', 'Ensure <meta name="ad.size" content="width=XXX,height=YYY"> is present.', 'meta-size-missing-inferred-filename'));
       } else {
-        issues.push(createIssuePageClient('error', 'Required ad.size meta tag not found in HTML and no dimensions in filename.', 'Ensure <meta name="ad.size" content="width=XXX,height=YYY"> is present or include dimensions in filename like _WIDTHxHEIGHT.zip.'));
+        issues.push(createIssuePageClient('error', 'Required ad.size meta tag not found in HTML and no dimensions in filename.', 'Ensure <meta name="ad.size" content="width=XXX,height=YYY"> is present or include dimensions in filename like _WIDTHxHEIGHT.zip.', 'meta-size-missing-no-filename'));
       }
     }
   } else {
     if (filenameIntrinsicWidth !== undefined && filenameIntrinsicHeight !== undefined) {
       actualMetaWidth = filenameIntrinsicWidth;
       actualMetaHeight = filenameIntrinsicHeight;
-      issues.push(createIssuePageClient('warning', 'Could not extract HTML. Dimensions inferred from filename.', 'Creative might be structured unusually or ZIP is empty/corrupt. Ad.size meta tag could not be verified.'));
+      issues.push(createIssuePageClient('warning', 'Could not extract HTML. Dimensions inferred from filename.', 'Creative might be structured unusually or ZIP is empty/corrupt. Ad.size meta tag could not be verified.', 'meta-size-no-html-inferred-filename'));
     } else {
-      issues.push(createIssuePageClient('error', 'Could not extract HTML and no dimensions in filename.', 'Unable to determine dimensions. Ad.size meta tag could not be verified.'));
+      issues.push(createIssuePageClient('error', 'Could not extract HTML and no dimensions in filename.', 'Unable to determine dimensions. Ad.size meta tag could not be verified.', 'meta-size-no-html-no-filename'));
     }
   }
   
@@ -575,17 +580,15 @@ const buildValidationResult = async (
     expectedDim = { width: actualMetaWidth, height: actualMetaHeight };
   } else if (filenameIntrinsicWidth !== undefined && filenameIntrinsicHeight !== undefined) {
       expectedDim = { width: filenameIntrinsicWidth, height: filenameIntrinsicHeight };
-      if (!issues.some(iss => iss.message.includes("ad.size meta tag") || iss.message.includes("Could not extract HTML"))) {
-        issues.push(createIssuePageClient('warning', 'Ad dimensions inferred from filename due to missing/invalid ad.size meta tag or HTML extraction issues.'));
-      }
+      // The specific issue for this case (meta tag missing/invalid, filename used) is added above.
   } else if (POSSIBLE_FALLBACK_DIMENSIONS.length > 0 && analysis.htmlContent) {
       const fallbackDim = POSSIBLE_FALLBACK_DIMENSIONS[Math.floor(Math.random() * POSSIBLE_FALLBACK_DIMENSIONS.length)];
       expectedDim = {width: fallbackDim.width, height: fallbackDim.height};
-      issues.push(createIssuePageClient('error', `Could not determine ad dimensions from meta tag or filename. Defaulted to a fallback guess: ${fallbackDim.width}x${fallbackDim.height}. Verify ad.size meta tag and filename conventions.`));
+      issues.push(createIssuePageClient('error', `Could not determine ad dimensions from meta tag or filename. Defaulted to a fallback guess: ${fallbackDim.width}x${fallbackDim.height}. Verify ad.size meta tag and filename conventions.`, undefined, 'meta-size-fallback-guess'));
   } else {
       expectedDim = { width: 300, height: 250 }; 
       if (analysis.htmlContent || (filenameIntrinsicWidth === undefined && filenameIntrinsicHeight === undefined)) {
-         issues.push(createIssuePageClient('error', 'Could not determine ad dimensions. Defaulted to 300x250. Ensure ad.size meta tag or filename convention is used.'));
+         issues.push(createIssuePageClient('error', 'Could not determine ad dimensions. Defaulted to 300x250. Ensure ad.size meta tag or filename convention is used.', undefined, 'meta-size-defaulted'));
       }
   }
 
@@ -734,5 +737,3 @@ export default function HomePage() {
     </div>
   );
 }
-
-    
