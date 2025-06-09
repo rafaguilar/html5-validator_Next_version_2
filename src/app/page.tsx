@@ -22,8 +22,7 @@ const POSSIBLE_FALLBACK_DIMENSIONS = [
 ];
 
 const ALLOWED_IMAGE_EXTENSIONS = ['.gif', '.jpg', '.jpeg', '.png', '.svg'];
-// Common image extensions that might be used but are not in the allowed list for this validator.
-const KNOWN_UNSUPPORTED_IMAGE_EXTENSIONS = ['.bmp', '.tiff', '.webp', '.ico', '.jfif', '.tif'];
+// KNOWN_UNSUPPORTED_IMAGE_EXTENSIONS is removed as the logic for CSS will now simply check !ALLOWED_IMAGE_EXTENSIONS.includes(extension)
 
 
 interface MissingAssetInfo {
@@ -215,9 +214,13 @@ const processCssContentAndCollectReferences = async (
     if (resolvedAssetPath && zip.file(resolvedAssetPath)) {
       referencedAssetPathsCollector.add(resolvedAssetPath);
       const extension = resolvedAssetPath.substring(resolvedAssetPath.lastIndexOf('.')).toLowerCase();
-      if (extension && KNOWN_UNSUPPORTED_IMAGE_EXTENSIONS.includes(extension) && !ALLOWED_IMAGE_EXTENSIONS.includes(extension)) {
+      // Simplified check: if the extension is not in ALLOWED_IMAGE_EXTENSIONS, it's an error.
+      // This applies if any file (image or not) is referenced in CSS and is present but not an allowed image type.
+      // This could lead to false positives if e.g. url() is used for fonts or other data types.
+      // For now, prioritizing the user's request to flag non-allowed formats as errors.
+      if (extension && !ALLOWED_IMAGE_EXTENSIONS.includes(extension)) {
         formatIssuesCollector.push(createIssuePageClient(
-          'error', // Changed from 'warning' to 'error'
+          'error', 
           `Unsupported image format used: '${resolvedAssetPath.split('/').pop()}' in CSS.`,
           `Allowed formats are: ${ALLOWED_IMAGE_EXTENSIONS.join(', ')}. Path: ${resolvedAssetPath}`,
           'unsupported-css-image-format'
@@ -315,7 +318,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
                 const extension = assetPath.substring(assetPath.lastIndexOf('.')).toLowerCase();
                 if (extension && !ALLOWED_IMAGE_EXTENSIONS.includes(extension)) {
                     formatIssues.push(createIssuePageClient(
-                        'error', // Changed from 'warning' to 'error'
+                        'error', 
                         `Unsupported image format used: '${assetPath.split('/').pop()}' in HTML.`,
                         `Allowed formats are: ${ALLOWED_IMAGE_EXTENSIONS.join(', ')}. Path: ${assetPath}`,
                         'unsupported-html-image-format'
@@ -746,3 +749,4 @@ export default function HomePage() {
     </div>
   );
 }
+
