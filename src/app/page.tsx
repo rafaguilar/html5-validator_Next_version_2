@@ -217,7 +217,7 @@ const processCssContentAndCollectReferences = async (
       const extension = resolvedAssetPath.substring(resolvedAssetPath.lastIndexOf('.')).toLowerCase();
       if (extension && KNOWN_UNSUPPORTED_IMAGE_EXTENSIONS.includes(extension) && !ALLOWED_IMAGE_EXTENSIONS.includes(extension)) {
         formatIssuesCollector.push(createIssuePageClient(
-          'warning',
+          'error', // Changed from 'warning' to 'error'
           `Unsupported image format used: '${resolvedAssetPath.split('/').pop()}' in CSS.`,
           `Allowed formats are: ${ALLOWED_IMAGE_EXTENSIONS.join(', ')}. Path: ${resolvedAssetPath}`,
           'unsupported-css-image-format'
@@ -315,7 +315,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
                 const extension = assetPath.substring(assetPath.lastIndexOf('.')).toLowerCase();
                 if (extension && !ALLOWED_IMAGE_EXTENSIONS.includes(extension)) {
                     formatIssues.push(createIssuePageClient(
-                        'warning',
+                        'error', // Changed from 'warning' to 'error'
                         `Unsupported image format used: '${assetPath.split('/').pop()}' in HTML.`,
                         `Allowed formats are: ${ALLOWED_IMAGE_EXTENSIONS.join(', ')}. Path: ${assetPath}`,
                         'unsupported-html-image-format'
@@ -344,8 +344,6 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
                 if (assetPath && zip.file(assetPath)) {
                     referencedAssetPaths.add(assetPath);
                     if (assetPath.toLowerCase().endsWith('.js')) {
-                        // Check if it's a non-CDN local script
-                        // This check can be simple: if it's not starting with http/https and resolved locally
                          hasNonCdnExternalScripts = true; 
                     }
                 } else { 
@@ -509,7 +507,7 @@ const buildValidationResult = async (
   }
   
   issues.push(...analysis.cssLintIssues);
-  issues.push(...analysis.formatIssues); // Add image format issues
+  issues.push(...analysis.formatIssues); 
 
 
   if (analysis.htmlContent) {
