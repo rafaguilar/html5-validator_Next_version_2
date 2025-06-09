@@ -21,6 +21,11 @@ const POSSIBLE_FALLBACK_DIMENSIONS = [
   { width: 970, height: 250 }, { width: 336, height: 280 },
 ];
 
+const ALLOWED_IMAGE_EXTENSIONS = ['.gif', '.jpg', '.jpeg', '.png', '.svg'];
+// Common image extensions that might be used but are not in the allowed list for this validator.
+const KNOWN_UNSUPPORTED_IMAGE_EXTENSIONS = ['.bmp', '.tiff', '.webp', '.ico', '.jfif', '.tif'];
+
+
 interface MissingAssetInfo {
   type: 'cssRef' | 'htmlImg' | 'htmlSource' | 'htmlLinkCss' | 'htmlScript';
   path: string;
@@ -34,7 +39,8 @@ interface CreativeAssetAnalysis {
   unreferencedFiles: string[];
   foundHtmlPath?: string;
   htmlContent?: string;
-  cssLintIssues: ValidationIssue[];
+  cssLintIssues: ValidationIssue[]; // Specific CSS lint issues from Stylelint API
+  formatIssues: ValidationIssue[]; // For new format checks like image types
   hasNonCdnExternalScripts: boolean;
   htmlFileCount: number;
   allHtmlFilePathsInZip: string[];
@@ -71,19 +77,15 @@ const resolveAssetPathInZip = (assetPath: string, baseFilePath: string, zip: JSZ
   if (zip.file(resolvedPath)) {
     return resolvedPath;
   }
-  // Fallback: If baseFilePath was deep, try resolving assetPath as if it's from ZIP root (if it doesn't contain '/')
-  // This helps with paths like "image.png" referenced from "folder/index.html" where "image.png" is at ZIP root.
   if (!assetPath.includes('/') && zip.file(assetPath)) {
     return assetPath;
   }
-  // console.warn(`[resolveAssetPathInZip] Could not resolve asset path "${assetPath}" from base "${baseFilePath}". Tried "${resolvedPath}".`);
   return null;
 };
 
 
 const findHtmlFileInZip = async (zip: JSZip): Promise<{ path: string, content: string } | null> => {
   const allFiles = Object.keys(zip.files);
-  // Prioritize index.html at the shallowest depth not in __MACOSX
   const rootIndexHtmlCandidates = allFiles.filter(path => 
     path.toLowerCase().endsWith('index.html') && !path.startsWith("__MACOSX/")
   );
@@ -92,7 +94,7 @@ const findHtmlFileInZip = async (zip: JSZip): Promise<{ path: string, content: s
   let minDepth = Infinity;
 
   for (const path of rootIndexHtmlCandidates) {
-      const depth = path.split('/').length - 1; // number of slashes
+      const depth = path.split('/').length - 1; 
       if (depth < minDepth) {
           minDepth = depth;
           shortestDepthIndexHtml = path;
@@ -104,7 +106,6 @@ const findHtmlFileInZip = async (zip: JSZip): Promise<{ path: string, content: s
       return { path: shortestDepthIndexHtml, content };
   }
 
-  // Fallback: any .html file at the shallowest depth not in __MACOSX
   const anyHtmlCandidates = allFiles.filter(path => 
     path.toLowerCase().endsWith('.html') && !path.startsWith("__MACOSX/")
   );
@@ -125,7 +126,6 @@ const findHtmlFileInZip = async (zip: JSZip): Promise<{ path: string, content: s
       return { path: shortestDepthAnyHtml, content };
   }
   
-  // console.warn("[findHtmlFileInZip] No suitable HTML file found.");
   return null;
 };
 
@@ -143,20 +143,18 @@ async function lintCssContentViaAPI(cssText: string, filePath: string): Promise<
       let errorDetails = `Server responded with status ${response.status} (${response.statusText || 'No status text'}).`;
       let responseBodyText = '';
       try {
-        responseBodyText = await response.text(); // Attempt to get raw body first
-        const errorData = JSON.parse(responseBodyText); // Then try to parse it as JSON
+        responseBodyText = await response.text(); 
+        const errorData = JSON.parse(responseBodyText); 
 
-        // Check if the parsed data matches our expected error structure from the API
         if (errorData.issues && errorData.issues.length > 0 && errorData.issues[0].message) {
            errorDetails = errorData.issues[0].message;
            if(errorData.issues[0].details) errorDetails += ` Details: ${errorData.issues[0].details}`;
-        } else if (errorData.error) { // For other simple JSON error responses
+        } else if (errorData.error) { 
           errorDetails = errorData.error;
-        } else if (responseBodyText) { // If not our structure, but body has text, use it
+        } else if (responseBodyText) { 
            errorDetails = responseBodyText;
         }
       } catch (e) {
-        // JSON parsing failed or .text() failed. Use responseBodyText if available, otherwise the status line.
         if (responseBodyText) {
             errorDetails = responseBodyText;
         }
@@ -167,15 +165,13 @@ async function lintCssContentViaAPI(cssText: string, filePath: string): Promise<
         createIssuePageClient(
           'error',
           `CSS linting service request failed for ${filePath}.`,
-          errorDetails.substring(0, 500) // Limit details length to avoid overly long messages
+          errorDetails.substring(0, 500) 
         ),
       ];
     }
 
-    // If response.ok, try to parse JSON as success
     const data = await response.json();
     if (data.issues && Array.isArray(data.issues)) {
-      // Map API issues to ValidationIssue, ensuring all fields are present
       return data.issues.map((issue: any) => createIssuePageClient(
         issue.type as ('error' | 'warning'),
         issue.message || 'Unknown linting issue',
@@ -184,7 +180,7 @@ async function lintCssContentViaAPI(cssText: string, filePath: string): Promise<
       ));
     }
     return [createIssuePageClient('warning', `CSS linting returned no issues for ${filePath}, or an unexpected response format.`)];
-  } catch (error: any) { // Network errors or other client-side fetch issues
+  } catch (error: any) { 
     console.error(`Client-side error calling CSS linting API for ${filePath}:`, error);
     return [createIssuePageClient('error', `Failed to call CSS linting service for ${filePath}.`, error.message)];
   }
@@ -197,35 +193,42 @@ const processCssContentAndCollectReferences = async (
   zip: JSZip,
   missingAssetsCollector: MissingAssetInfo[],
   referencedAssetPathsCollector: Set<string>,
-  cssIssuesCollector: ValidationIssue[]
+  cssIssuesCollector: ValidationIssue[],
+  formatIssuesCollector: ValidationIssue[] // For new format checks
 ): Promise<void> => {
-  // First, lint the CSS content
   const lintingIssues = await lintCssContentViaAPI(cssContent, cssFilePath);
   cssIssuesCollector.push(...lintingIssues);
 
-  // Then, process for URL references (only if linting didn't return critical parse errors,
-  // though url() extraction might still work on somewhat malformed CSS)
   const urlPattern = /url\s*\(\s*(['"]?)(.*?)\1\s*\)/gi;
   let match;
 
   while ((match = urlPattern.exec(cssContent)) !== null) {
-    const originalUrl = match[0]; // e.g., url('../img/image.png')
-    const assetUrlFromCss = match[2]; // e.g., ../img/image.png
+    const originalUrl = match[0]; 
+    const assetUrlFromCss = match[2]; 
 
     if (assetUrlFromCss.startsWith('data:') || assetUrlFromCss.startsWith('http:') || assetUrlFromCss.startsWith('https:') || assetUrlFromCss.startsWith('//')) {
-      continue; // Skip data URIs and absolute URLs
+      continue; 
     }
 
     const resolvedAssetPath = resolveAssetPathInZip(assetUrlFromCss, cssFilePath, zip);
 
     if (resolvedAssetPath && zip.file(resolvedAssetPath)) {
       referencedAssetPathsCollector.add(resolvedAssetPath);
+      const extension = resolvedAssetPath.substring(resolvedAssetPath.lastIndexOf('.')).toLowerCase();
+      if (extension && KNOWN_UNSUPPORTED_IMAGE_EXTENSIONS.includes(extension) && !ALLOWED_IMAGE_EXTENSIONS.includes(extension)) {
+        formatIssuesCollector.push(createIssuePageClient(
+          'warning',
+          `Unsupported image format used: '${resolvedAssetPath.split('/').pop()}' in CSS.`,
+          `Allowed formats are: ${ALLOWED_IMAGE_EXTENSIONS.join(', ')}. Path: ${resolvedAssetPath}`,
+          'unsupported-css-image-format'
+        ));
+      }
     } else {
       missingAssetsCollector.push({
         type: 'cssRef',
-        path: assetUrlFromCss, // The path as written in CSS
+        path: assetUrlFromCss, 
         referencedFrom: cssFilePath,
-        originalSrc: originalUrl // The full url(...) pattern
+        originalSrc: originalUrl 
       });
     }
   }
@@ -235,6 +238,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
   const missingAssets: MissingAssetInfo[] = [];
   const referencedAssetPaths = new Set<string>();
   const cssLintIssues: ValidationIssue[] = [];
+  const formatIssues: ValidationIssue[] = []; // For image format issues etc.
   let foundHtmlPath: string | undefined;
   let htmlContentForAnalysis: string | undefined;
   let zipBaseDir = ''; 
@@ -253,8 +257,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
     const htmlFile = await findHtmlFileInZip(zip);
 
     if (!htmlFile) {
-      // console.warn(`[analyzeCreativeAssets] No HTML file found in ${file.name}. All files will be marked as unreferenced.`);
-      return { missingAssets, unreferencedFiles: allZipFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, hasNonCdnExternalScripts, htmlFileCount, allHtmlFilePathsInZip };
+      return { missingAssets, unreferencedFiles: allZipFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, formatIssues, hasNonCdnExternalScripts, htmlFileCount, allHtmlFilePathsInZip };
     }
 
     foundHtmlPath = htmlFile.path;
@@ -276,7 +279,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
           referencedAssetPaths.add(cssFilePath);
           processedCssPaths.add(cssFilePath);
           const cssContent = await zip.file(cssFilePath)!.async('string');
-          await processCssContentAndCollectReferences(cssContent, cssFilePath, zip, missingAssets, referencedAssetPaths, cssLintIssues);
+          await processCssContentAndCollectReferences(cssContent, cssFilePath, zip, missingAssets, referencedAssetPaths, cssLintIssues, formatIssues);
         } else if (!cssFilePath || !zip.file(cssFilePath)) {
           missingAssets.push({ type: 'htmlLinkCss', path: href, referencedFrom: foundHtmlPath, originalSrc: href });
         }
@@ -290,14 +293,14 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
             referencedAssetPaths.add(potentialCssPath);
             processedCssPaths.add(potentialCssPath);
             const cssContent = await zip.file(potentialCssPath)!.async('string');
-            await processCssContentAndCollectReferences(cssContent, potentialCssPath, zip, missingAssets, referencedAssetPaths, cssLintIssues);
+            await processCssContentAndCollectReferences(cssContent, potentialCssPath, zip, missingAssets, referencedAssetPaths, cssLintIssues, formatIssues);
         } else {
             const potentialAbsoluteCssPath = suffix;
              if (zipBaseDir !== '' && zip.file(potentialAbsoluteCssPath) && !processedCssPaths.has(potentialAbsoluteCssPath)) {
                 referencedAssetPaths.add(potentialAbsoluteCssPath);
                 processedCssPaths.add(potentialAbsoluteCssPath);
                 const cssContent = await zip.file(potentialAbsoluteCssPath)!.async('string');
-                await processCssContentAndCollectReferences(cssContent, potentialAbsoluteCssPath, zip, missingAssets, referencedAssetPaths, cssLintIssues);
+                await processCssContentAndCollectReferences(cssContent, potentialAbsoluteCssPath, zip, missingAssets, referencedAssetPaths, cssLintIssues, formatIssues);
             }
         }
     }
@@ -309,6 +312,15 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
             const assetPath = resolveAssetPathInZip(srcAttr, foundHtmlPath, zip);
             if (assetPath && zip.file(assetPath)) {
                 referencedAssetPaths.add(assetPath);
+                const extension = assetPath.substring(assetPath.lastIndexOf('.')).toLowerCase();
+                if (extension && !ALLOWED_IMAGE_EXTENSIONS.includes(extension)) {
+                    formatIssues.push(createIssuePageClient(
+                        'warning',
+                        `Unsupported image format used: '${assetPath.split('/').pop()}' in HTML.`,
+                        `Allowed formats are: ${ALLOWED_IMAGE_EXTENSIONS.join(', ')}. Path: ${assetPath}`,
+                        'unsupported-html-image-format'
+                    ));
+                }
             } else {
                 missingAssets.push({
                     type: el.tagName.toLowerCase() === 'img' ? 'htmlImg' : 'htmlSource',
@@ -332,7 +344,9 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
                 if (assetPath && zip.file(assetPath)) {
                     referencedAssetPaths.add(assetPath);
                     if (assetPath.toLowerCase().endsWith('.js')) {
-                        hasNonCdnExternalScripts = true; 
+                        // Check if it's a non-CDN local script
+                        // This check can be simple: if it's not starting with http/https and resolved locally
+                         hasNonCdnExternalScripts = true; 
                     }
                 } else { 
                      missingAssets.push({
@@ -351,16 +365,15 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
         if (!referencedAssetPaths.has(filePathInZip) && !allHtmlFilePathsInZip.includes(filePathInZip)) { 
             unreferencedFiles.push(filePathInZip);
         } else if (allHtmlFilePathsInZip.includes(filePathInZip) && filePathInZip !== foundHtmlPath && htmlFileCount > 1) {
-            // If it's an HTML file, not the primary one, and there are multiple HTML files, it could be considered unreferenced by primary
-            // Or handle it via the multiple HTML files error specifically
+            // This case is handled by the multiple HTML files error
         }
     });
 
-    return { missingAssets, unreferencedFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, hasNonCdnExternalScripts, htmlFileCount, allHtmlFilePathsInZip };
+    return { missingAssets, unreferencedFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, formatIssues, hasNonCdnExternalScripts, htmlFileCount, allHtmlFilePathsInZip };
 
   } catch (error: any) {
     cssLintIssues.push(createIssuePageClient('error', `Critical error analyzing ZIP file ${file.name}.`, error.message, 'zip-analysis-error'));
-    return { missingAssets, unreferencedFiles: [], foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, hasNonCdnExternalScripts, htmlFileCount, allHtmlFilePathsInZip };
+    return { missingAssets, unreferencedFiles: [], foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, formatIssues, hasNonCdnExternalScripts, htmlFileCount, allHtmlFilePathsInZip };
   }
 };
 
@@ -368,8 +381,6 @@ const findClickTagsInHtml = (htmlContent: string | null): ClickTagInfo[] => {
   if (!htmlContent) return [];
 
   const clickTags: ClickTagInfo[] = [];
-  // Regex from provided file: /(?:^|[\s;,\{\(])\s*(?:(?:var|let|const)\s+)?(?:window\.)?([a-zA-Z0-9_]*clickTag[a-zA-Z0-9_]*)\s*=\s*["'](http[^"']+)["']/gmi;
-  // Using the more robust one we developed:
   const clickTagRegex = /(?:^|[\s;,\{\(])\s*(?:(?:var|let|const)\s+)?(?:window\.)?([a-zA-Z0-9_]*clickTag[a-zA-Z0-9_]*)\s*=\s*(["'])((?:https?:\/\/)(?:(?!\2).)*?)\2/gmi;
 
 
@@ -383,7 +394,7 @@ const findClickTagsInHtml = (htmlContent: string | null): ClickTagInfo[] => {
   let match;
   while ((match = clickTagRegex.exec(scriptContent)) !== null) {
     const name = match[1]; 
-    const url = match[3]; // Group 3 for URL with the robust regex
+    const url = match[3]; 
     clickTags.push({
       name,
       url,
@@ -498,6 +509,7 @@ const buildValidationResult = async (
   }
   
   issues.push(...analysis.cssLintIssues);
+  issues.push(...analysis.formatIssues); // Add image format issues
 
 
   if (analysis.htmlContent) {
@@ -580,7 +592,6 @@ const buildValidationResult = async (
     expectedDim = { width: actualMetaWidth, height: actualMetaHeight };
   } else if (filenameIntrinsicWidth !== undefined && filenameIntrinsicHeight !== undefined) {
       expectedDim = { width: filenameIntrinsicWidth, height: filenameIntrinsicHeight };
-      // The specific issue for this case (meta tag missing/invalid, filename used) is added above.
   } else if (POSSIBLE_FALLBACK_DIMENSIONS.length > 0 && analysis.htmlContent) {
       const fallbackDim = POSSIBLE_FALLBACK_DIMENSIONS[Math.floor(Math.random() * POSSIBLE_FALLBACK_DIMENSIONS.length)];
       expectedDim = {width: fallbackDim.width, height: fallbackDim.height};
