@@ -46,12 +46,12 @@ interface CreativeAssetAnalysis {
 }
 
 
-const createIssuePageClient = (type: 'error' | 'warning', message: string, details?: string, rule?: string): ValidationIssue => ({
+const createIssuePageClient = (type: 'error' | 'warning' | 'info', message: string, details?: string, rule?: string): ValidationIssue => ({
   id: `issue-page-client-${Math.random().toString(36).substr(2, 9)}`,
   type,
   message,
   details,
-  rule: rule || (type === 'error' ? 'client-error' : 'client-warning'),
+  rule: rule || (type === 'error' ? 'client-error' : (type === 'warning' ? 'client-warning' : 'client-info')),
 });
 
 const resolveAssetPathInZip = (assetPath: string, baseFilePath: string, zip: JSZip): string | null => {
@@ -347,7 +347,24 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
                 if (assetPath && zip.file(assetPath)) {
                     referencedAssetPaths.add(assetPath);
                     if (assetPath.toLowerCase().endsWith('.js')) {
-                         hasNonCdnExternalScripts = true; 
+                         // Check if it's from a known CDN
+                         const cdnPatterns = [
+                            /^(https?:)?\/\/s0\.2mdn\.net\//, // DCM/DoubleClick
+                            /^(https?:)?\/\/tpc\.googlesyndication\.com\//, // Google
+                            /^(https?:)?\/\/secure-\w+\.adnxs\.com\//, // AppNexus/Xandr
+                            /^(https?:)?\/\/ads\.yahoo\.com\//, // Yahoo
+                            /^(https?:)?\/\/cdn\.ampproject\.org\//, // AMP
+                            /^(https?:)?\/\/cdnjs\.cloudflare\.com\//, // CDNJS
+                            /^(https?:)?\/\/ajax\.googleapis\.com\//, // Google Hosted Libraries
+                            /^(https?:)?\/\/code\.jquery\.com\//, // jQuery CDN
+                            /^(https?:)?\/\/maxcdn\.bootstrapcdn\.com\//, // BootstrapCDN
+                            /^(https?:)?\/\/cdn\.jsdelivr\.net\//, // jsDelivr
+                            /^(https?:)?\/\/unpkg\.com\//, // unpkg
+                         ];
+                         const isCdnHosted = cdnPatterns.some(pattern => pattern.test(srcAttr));
+                         if (!isCdnHosted) {
+                           hasNonCdnExternalScripts = true; 
+                         }
                     }
                 } else { 
                      missingAssets.push({
@@ -357,10 +374,50 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
                         originalSrc: srcAttr
                     });
                 }
+            } else if (isExternalUrl) {
+                 const cdnPatterns = [
+                    /^(https?:)?\/\/s0\.2mdn\.net\//, 
+                    /^(https?:)?\/\/tpc\.googlesyndication\.com\//,
+                    /^(https?:)?\/\/secure-\w+\.adnxs\.com\//, 
+                    /^(https?:)?\/\/ads\.yahoo\.com\//,
+                    /^(https?:)?\/\/cdn\.ampproject\.org\//,
+                    /^(https?:)?\/\/cdnjs\.cloudflare\.com\//,
+                    /^(https?:)?\/\/ajax\.googleapis\.com\//,
+                    /^(https?:)?\/\/code\.jquery\.com\//,
+                    /^(https?:)?\/\/maxcdn\.bootstrapcdn\.com\//,
+                    /^(https?:)?\/\/cdn\.jsdelivr\.net\//,
+                    /^(https?:)?\/\/unpkg\.com\//,
+                 ];
+                 const isCdnHosted = cdnPatterns.some(pattern => pattern.test(srcAttr));
+                 if (!isCdnHosted) {
+                   hasNonCdnExternalScripts = true;
+                 }
             }
         }
     }
     
+    // Scan all JS files in the ZIP for dynamic image loading patterns
+    const allJsFilePathsInZipScan = allZipFiles.filter(path => path.toLowerCase().endsWith('.js'));
+    for (const jsFilePath of allJsFilePathsInZipScan) {
+        const jsFileObject = zip.file(jsFilePath);
+        if (jsFileObject) {
+            const jsContent = await jsFileObject.async('string');
+
+            const querySelectorPattern = /querySelectorAllforEach\s*\(\s*["']\[id\*=_svg\],\s*\[id\*=_jpg\],\s*\[id\*=_png\],\s*\[id\*=_gif\]["']\s*,/;
+            const idReplaceLogicPattern = /const\s+fn\s*=\s*item\.getAttribute\s*\(\s*["']id["']\s*\)\s*\.replaceAll\s*\(\s*["']_["']\s*,\s*["']\.["']\s*\)/;
+            const imgSrcUsesFnPattern = /img\.src\s*=[^;]*(\b|\$\{)fn(\b|\})[^;]*;/; // Checks for 'fn' used in img.src
+
+            if (querySelectorPattern.test(jsContent) && idReplaceLogicPattern.test(jsContent) && imgSrcUsesFnPattern.test(jsContent)) {
+                formatIssues.push(createIssuePageClient(
+                    'info',
+                    `Potential dynamic image loading script detected in: ${jsFilePath}.`,
+                    'The script appears to use a pattern (e.g., "Autoload Sequence" using "querySelectorAllforEach" and "item.getAttribute(\'id\').replaceAll") to load images based on element IDs. Images loaded this way (e.g., using a variable like "fn" in img.src) might not be fully trackable by static analysis. If a global path like "window.PATH" is used, ensure it\'s correctly defined. Verify all dynamically loaded assets are present in the ZIP.',
+                    'dynamic-image-loader-script'
+                ));
+            }
+        }
+    }
+
     const unreferencedFiles: string[] = [];
     allZipFiles.forEach(filePathInZip => {
         if (!referencedAssetPaths.has(filePathInZip) && !allHtmlFilePathsInZip.includes(filePathInZip)) { 
@@ -424,7 +481,7 @@ const lintHtmlContent = (htmlString: string): ValidationIssue[] => {
 
   const messages = HTMLHint.verify(htmlString, ruleset);
   return messages.map((msg: LintResult) => {
-    let issueType: 'error' | 'warning' = 'warning'; 
+    let issueType: 'error' | 'warning' | 'info' = 'warning'; 
     if (msg.type === 'error') { 
       issueType = 'error';
     }
@@ -619,14 +676,21 @@ const buildValidationResult = async (
 
   const hasErrors = issues.some(issue => issue.type === 'error');
   const hasWarnings = issues.some(issue => issue.type === 'warning');
+  const hasInfos = issues.some(issue => issue.type === 'info');
+
 
   if (hasErrors) {
     status = 'error';
   } else if (hasWarnings) {
     status = 'warning';
-  } else {
-    status = 'success';
+  } else if (hasInfos && issues.length === analysis.formatIssues.filter(fi => fi.type === 'info').length) { 
+    // If only info issues from formatIssues (like dynamic loader) and no other errors/warnings
+    status = 'success'; // Or 'info' if we had a dedicated status for it. For now, treat as success if no errors/warnings.
+  } else if (hasInfos) {
+    // If there are infos alongside other success conditions but no errors/warnings
+    status = 'success'; // Or 'info'
   }
+
 
   return {
     status,
