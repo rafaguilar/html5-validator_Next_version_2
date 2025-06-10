@@ -30,9 +30,18 @@ export async function POST(request: NextRequest) {
       code: code,
       codeFilename: codeFilename,
       config: {
-        extends: ['stylelint-config-standard'],
-        // Add any specific rules or overrides here if needed in the future.
-        // e.g. rules: { 'selector-class-pattern': null } to disable a specific rule.
+        // Using a minimal, direct set of rules instead of extending stylelint-config-standard
+        rules: {
+          'color-no-invalid-hex': true,
+          'font-family-no-duplicate-names': true,
+          'declaration-block-no-duplicate-properties': true,
+          'block-no-empty': true,
+          'unit-no-unknown': true,
+          'string-no-newline': true,
+          'selector-pseudo-class-no-unknown': true,
+          'property-no-unknown': true,
+          // Add more relatively simple, self-contained rules here if needed
+        },
       },
       fix: false, // Set to true if you want to try auto-fixing (would require handling fixed code)
     });
@@ -63,7 +72,6 @@ export async function POST(request: NextRequest) {
         lintIssues.push({
           id: `css-${warning.rule || 'general'}-${warning.line}-${warning.column}-${Math.random().toString(36).substring(2, 9)}`,
           type: warning.severity === 'error' ? 'error' : 'warning',
-          // Remove rule name from message as it's often included by stylelint and we have a separate 'rule' field.
           message: warning.text.replace(new RegExp(`\\s*\\(${warning.rule}\\)$`), '').trim(),
           details: `Line: ${warning.line}, Column: ${warning.column}, Rule: ${warning.rule || 'unknown'}`,
           rule: warning.rule || 'unknown',
@@ -75,6 +83,13 @@ export async function POST(request: NextRequest) {
 
   } catch (error: any) {
     console.error('Critical error in /api/lint-css POST handler:', error);
+    
+    let errorMessage = 'Failed to lint CSS due to a server-side exception.';
+    if (error.message) {
+      errorMessage += ` Details: ${error.message}`;
+    } else if (typeof error === 'string') {
+      errorMessage += ` Details: ${error}`;
+    }
     
     const criticalErrorIssue: ValidationIssue = {
         id: `css-critical-server-error-${Math.random().toString(36).substring(2, 9)}`,
