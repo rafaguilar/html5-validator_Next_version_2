@@ -73,7 +73,7 @@ const resolveAssetPathInZip = (assetPath: string, baseFilePath: string, zip: JSZ
   if (zip.file(resolvedPath)) {
     return resolvedPath;
   }
-  if (!assetPath.includes('/') && zip.file(assetPath)) {
+  if (!assetPath.includes('/') && zip.file(assetPath)) { // Fallback for assets at root if not found with relative path
     return assetPath;
   }
   return null;
@@ -169,7 +169,7 @@ async function lintCssContentViaAPI(cssText: string, filePath: string): Promise<
     const data = await response.json();
     if (data.issues && Array.isArray(data.issues)) {
       return data.issues.map((issue: any) => createIssuePageClient(
-        issue.type as ('error' | 'warning' | 'info'), // Support info type
+        issue.type as ('error' | 'warning' | 'info'), 
         issue.message || 'Unknown linting issue',
         issue.details || `Line: ${issue.line}, Col: ${issue.column}, Rule: ${issue.rule || 'unknown'}`,
         issue.rule || 'unknown'
@@ -185,7 +185,7 @@ async function lintCssContentViaAPI(cssText: string, filePath: string): Promise<
 
 const processCssContentAndCollectReferences = async (
   cssContent: string,
-  cssFilePath: string, // This can be the HTML file path for inline styles
+  cssFilePath: string, 
   zip: JSZip,
   missingAssetsCollector: MissingAssetInfo[],
   referencedAssetPathsCollector: Set<string>,
@@ -238,7 +238,7 @@ const checkDynamicImageLoader = (
 ) => {
     const querySelectorPattern = /querySelectorAllforEach\s*\(\s*["']\[id\*=_svg\],\s*\[id\*=_jpg\],\s*\[id\*=_png\],\s*\[id\*=_gif\]["']\s*,/;
     const idReplaceLogicPattern = /const\s+fn\s*=\s*item\.getAttribute\s*\(\s*["']id["']\s*\)\s*\.replaceAll\s*\(\s*["']_["']\s*,\s*["']\.["']\s*\)/;
-    const imgSrcUsesFnPattern = /img\.src\s*=[^;]*(\b|\$\{)fn(\b|\}|"|\')\s*[^;]*;/; // Made regex more flexible for fn usage
+    const imgSrcUsesFnPattern = /img\.src\s*=[^;]*(\b|\$\{)fn(\b|\}|"|\')\s*[^;]*;/; 
 
     if (querySelectorPattern.test(jsContent) && idReplaceLogicPattern.test(jsContent) && imgSrcUsesFnPattern.test(jsContent)) {
         formatIssuesCollector.push(createIssuePageClient(
@@ -285,7 +285,6 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
     htmlContentForAnalysis = htmlFile.content;
     const doc = new DOMParser().parseFromString(htmlContentForAnalysis, 'text/html');
 
-    // Process linked stylesheets (external CSS)
     const linkedStylesheets = Array.from(doc.querySelectorAll('link[rel="stylesheet"]'));
     const processedCssPaths = new Set<string>(); 
 
@@ -304,7 +303,6 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
       }
     }
     
-    // Attempt to find common CSS files if not explicitly linked (existing logic)
     const commonCssSuffixes = ['style.css', 'css/style.css', 'main.css', 'css/main.css'];
     for (const suffix of commonCssSuffixes) {
         const potentialCssPath = zipBaseDir + suffix; 
@@ -324,12 +322,10 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
         }
     }
 
-    // Process inline CSS (<style> tags)
     const styleTags = Array.from(doc.querySelectorAll('style'));
     for (const styleTag of styleTags) {
         const inlineCssContent = styleTag.textContent || '';
         if (inlineCssContent.trim()) {
-            // Use foundHtmlPath as the "filePath" for context in linting/reporting
             await processCssContentAndCollectReferences(inlineCssContent, foundHtmlPath, zip, missingAssets, referencedAssetPaths, cssLintIssues, formatIssues);
         }
     }
@@ -373,7 +369,6 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
                 const assetPath = resolveAssetPathInZip(srcAttr, foundHtmlPath, zip);
                 if (assetPath && zip.file(assetPath)) {
                     referencedAssetPaths.add(assetPath);
-                    // No longer checking for non-CDN external scripts here, as this is for local scripts
                 } else { 
                      missingAssets.push({
                         type: 'htmlScript',
@@ -404,7 +399,6 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
         }
     }
     
-    // Scan inline JS in the HTML file for dynamic image loading patterns
     const inlineScriptTags = Array.from(doc.querySelectorAll('script:not([src])'));
     let allInlineJsContent = '';
     inlineScriptTags.forEach(tag => {
@@ -420,7 +414,6 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
         );
     }
 
-    // Scan all separate JS files in the ZIP for dynamic image loading patterns
     const allJsFilePathsInZipScan = allZipFiles.filter(path => path.toLowerCase().endsWith('.js'));
     for (const jsFilePath of allJsFilePathsInZipScan) {
         const jsFileObject = zip.file(jsFilePath);
@@ -428,12 +421,93 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
             const jsContent = await jsFileObject.async('string');
             checkDynamicImageLoader(
                 jsContent,
-                jsFilePath, // Use the actual JS file path as source description
+                jsFilePath, 
                 formatIssues,
                 'dynamic-image-loader-script-external'
             );
         }
     }
+    
+    const htmlImageIdElements = Array.from(doc.querySelectorAll('[id$="_svg"], [id$="_jpg"], [id$="_png"], [id$="_gif"]'));
+    const expectedImagesFromHtml = new Map<string, { id: string, referencedFromHtml: string }>();
+    htmlImageIdElements.forEach(el => {
+        const id = el.getAttribute('id');
+        if (id) {
+            const suffixMatch = id.match(/(_(?:svg|jpg|png|gif))$/i);
+            if (suffixMatch) {
+                const baseName = id.substring(0, id.length - suffixMatch[1].length);
+                const extension = suffixMatch[1].substring(1).toLowerCase();
+                const expectedFileName = `${baseName}.${extension}`;
+                expectedImagesFromHtml.set(expectedFileName.toLowerCase(), { id, referencedFromHtml: foundHtmlPath! });
+            }
+        }
+    });
+
+    const imagesFolderName = 'images';
+    const imagesFolderPath = (zipBaseDir + imagesFolderName + '/').replace(/^\/+/, ''); 
+    const actualFilesInImagesFolder = new Map<string, string>(); 
+    let imagesFolderExists = false;
+    
+    allZipFiles.forEach(zipFilePath => {
+      const lowerZipFilePath = zipFilePath.toLowerCase();
+      const lowerImagesFolderPath = imagesFolderPath.toLowerCase();
+        if (lowerZipFilePath.startsWith(lowerImagesFolderPath) && zipFilePath.length > imagesFolderPath.length) {
+            imagesFolderExists = true;
+            const fileNameInFolder = zipFilePath.substring(imagesFolderPath.length);
+            if (fileNameInFolder.includes('/')) return; 
+
+            const extensionMatch = fileNameInFolder.match(/\.([^.]+)$/);
+            if (extensionMatch && ALLOWED_IMAGE_EXTENSIONS.includes(`.${extensionMatch[1].toLowerCase()}`)) {
+                 actualFilesInImagesFolder.set(fileNameInFolder.toLowerCase(), zipFilePath);
+            }
+        }
+    });
+    
+    if (expectedImagesFromHtml.size > 0) {
+        if (!imagesFolderExists && htmlImageIdElements.length > 0) {
+            const firstExpectedId = htmlImageIdElements[0].getAttribute('id') || 'example_id_suffix';
+             formatIssues.push(createIssuePageClient(
+                'error',
+                `HTML declares image IDs (e.g., '${firstExpectedId}') implying an '${imagesFolderName}/' folder, but this folder ('${imagesFolderPath}') was not found in the ZIP.`,
+                `Ensure an '${imagesFolderName}/' folder exists at the expected location relative to the HTML file, containing the required images.`,
+                'html-id-images-folder-missing'
+            ));
+        } else if (imagesFolderExists) {
+            expectedImagesFromHtml.forEach(({ id, referencedFromHtml }, normalizedExpectedFilename) => {
+                if (!actualFilesInImagesFolder.has(normalizedExpectedFilename)) {
+                    formatIssues.push(createIssuePageClient(
+                        'error',
+                        `Image for ID '${id}' in HTML ('${referencedFromHtml}') not found in '${imagesFolderPath}'.`,
+                        `Expected file: '${normalizedExpectedFilename}' in folder '${imagesFolderPath}'. Please ensure the file exists and names match (case-insensitive).`,
+                        'html-id-image-missing-in-folder'
+                    ));
+                } else {
+                    const actualZipPath = actualFilesInImagesFolder.get(normalizedExpectedFilename)!;
+                    referencedAssetPaths.add(actualZipPath); 
+                }
+            });
+        }
+    }
+
+    if (imagesFolderExists) {
+        actualFilesInImagesFolder.forEach((zipFilePath, normalizedActualFilename) => {
+            const expectedByHtmlId = expectedImagesFromHtml.has(normalizedActualFilename);
+            const alreadyReferenced = referencedAssetPaths.has(zipFilePath);
+
+            if (!expectedByHtmlId && !alreadyReferenced) {
+                 const suggestedIdBase = normalizedActualFilename.substring(0, normalizedActualFilename.lastIndexOf('.'));
+                 const suggestedIdSuffix = normalizedActualFilename.substring(normalizedActualFilename.lastIndexOf('.') + 1);
+                 const suggestedId = `${suggestedIdBase}_${suggestedIdSuffix}`;
+                formatIssues.push(createIssuePageClient(
+                    'warning',
+                    `Unreferenced image file '${zipFilePath}' in '${imagesFolderPath}'.`,
+                    `This file is in the '${imagesFolderName}/' folder but is not directly used by an <img src="...">, CSS url(), or an HTML element ID like '<div id="${suggestedId}"></div>'. Consider removing if not needed.`,
+                    'images-folder-unreferenced-image'
+                ));
+            }
+        });
+    }
+
 
     const unreferencedFiles: string[] = [];
     allZipFiles.forEach(filePathInZip => {
@@ -456,22 +530,15 @@ const findClickTagsInHtml = (htmlContent: string | null): ClickTagInfo[] => {
   if (!htmlContent) return [];
 
   const clickTags: ClickTagInfo[] = [];
-  // Regex to find clickTag declarations more reliably, including those not immediately assigned window.
-  // Looks for var/let/const, optional window., then clickTag variable name, equals, and then the URL.
   const clickTagRegex = /(?:^|[\s;,\{\(\[])\s*(?:(?:var|let|const)\s+)?(?:window\.)?([a-zA-Z0-9_]*clickTag[a-zA-Z0-9_]*)\s*=\s*(["'])((?:https?:\/\/)(?:(?!\2).)*?)\2/gmi;
 
 
   let scriptContent = "";
-  // Extract content from all script tags, not just external ones.
   const scriptTagRegex = /<script[^>]*>([\s\S]*?)<\/script>/gi;
   let scriptMatch;
   while((scriptMatch = scriptTagRegex.exec(htmlContent)) !== null) {
-    scriptContent += scriptMatch[1] + "\n"; // Add newline to separate script blocks
+    scriptContent += scriptMatch[1] + "\n"; 
   }
-
-  // Also check for clickTags directly in HTML attributes (less common but possible)
-  // Example: <a onclick="window.open(clickTag)">
-  // This is harder to parse reliably without full JS execution, so sticking to script content for now.
 
   let match;
   while ((match = clickTagRegex.exec(scriptContent)) !== null) {
@@ -550,7 +617,7 @@ const buildValidationResult = async (
     }
      issues.push(createIssuePageClient('error', 'No clickTags found or clickTag implementation is missing/invalid.', detailsForClickTagError));
 
-    if (analysis.hasNonCdnExternalScripts) { // This check is now broader, applies if any non-CDN external script exists
+    if (analysis.hasNonCdnExternalScripts) { 
         issues.push(createIssuePageClient(
             'warning',
             'clickTag declaration recommended in inline HTML script.',
@@ -700,7 +767,6 @@ const buildValidationResult = async (
 
   const hasErrors = issues.some(issue => issue.type === 'error');
   const hasWarnings = issues.some(issue => issue.type === 'warning');
-  // Check if there are only 'info' issues from formatIssues, or if there are 'info' issues alongside other non-error/non-warning states
   const onlyInfoIssues = issues.length > 0 && issues.every(issue => issue.type === 'info');
 
 
@@ -709,7 +775,7 @@ const buildValidationResult = async (
   } else if (hasWarnings) {
     status = 'warning';
   } else if (onlyInfoIssues) { 
-    status = 'success'; // Treat as success if only info, e.g., dynamic loader detected.
+    status = 'success'; 
   }
 
 
