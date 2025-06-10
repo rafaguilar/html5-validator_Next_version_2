@@ -2,42 +2,174 @@
 'use server';
 
 import type { NextRequest } from 'next/server';
-// stylelint import is removed as it causes issues on Netlify
+import stylelint, { type LinterResult, type Warning, type Configuration as StylelintConfig, type CssSyntaxError as StylelintCssSyntaxError } from 'stylelint';
 import type { ValidationIssue } from '@/types';
+
+const createIssueFromStylelintWarning = (warning: Warning, filePath: string, isParseErrorRelated: boolean = false): ValidationIssue => {
+  let message = warning.text;
+  let details = `Line: ${warning.line}, Col: ${warning.column}. Rule: ${warning.rule}.`;
+  let rule = warning.rule || 'stylelint-issue';
+
+  if (isParseErrorRelated) {
+    message = `CSS Syntax Error: ${warning.text.replace(/\s*\(CssSyntaxError\)$/i, '')}`; // Clean up "(CssSyntaxError)"
+    details = `File: ${filePath}. Line: ${warning.line}, Col: ${warning.column}. This may be due to a syntax error in the CSS or an issue with the Stylelint configuration. Error Type: ${warning.rule || 'UnknownSyntaxError'}`;
+    rule = 'css-syntax-error';
+  } else if (warning.rule === 'declaration-block-trailing-semicolon') {
+     message = 'Missing semicolon at the end of a declaration.';
+  } else if (warning.rule === 'block-no-empty') {
+     message = 'Empty block detected. This might indicate missing curly braces or an unintentional empty rule.';
+  }
+
+
+  return {
+    id: `css-lint-${filePath}-${warning.line}-${warning.column}-${warning.rule}-${Math.random().toString(36).substring(2, 9)}`,
+    type: warning.severity === 'error' ? 'error' : 'warning',
+    message: message,
+    details: details,
+    rule: rule,
+  };
+};
+
+const createCriticalParseErrorIssue = (error: any, filePath: string): ValidationIssue => {
+  let message = 'Critical CSS parsing error.';
+  let details = `Stylelint could not parse the CSS for ${filePath}. This is often due to severe syntax errors like unclosed blocks or comments. Original error: ${error.message || String(error)}`;
+  if (error.name === 'CssSyntaxError') {
+      const se = error as StylelintCssSyntaxError;
+      message = `CSS Syntax Error: ${se.reason || 'Malformed CSS'}`;
+      details = `File: ${filePath}. Line: ${se.line}, Col: ${se.column}. Source: ${se.source ? se.source.substring(0, 100) + '...' : 'N/A'}. Fix the syntax to proceed.`;
+  }
+  return {
+      id: `css-critical-parse-error-${filePath}-${Math.random().toString(36).substring(2, 9)}`,
+      type: 'error',
+      message: message,
+      details: details,
+      rule: 'css-syntax-critical',
+  };
+};
+
 
 export async function POST(request: NextRequest) {
   const lintIssues: ValidationIssue[] = [];
+  let filePath = 'unknown.css'; // Default filename
+
   try {
-    // --- Temporarily bypass stylelint execution ---
-    // This section is to avoid runtime errors on Netlify like "Cannot find module '../data/patch.json'"
-    // and build errors related to static analysis of stylelint.
-    // The API will return as if no CSS issues were found.
+    const body = await request.json();
+    const cssCode = body.code as string;
+    filePath = body.codeFilename || filePath; // Use provided filename if available
 
-    // No stylelint logic will be executed.
-    // The API will simply return an empty list of issues.
+    if (!cssCode || typeof cssCode !== 'string') {
+      lintIssues.push({
+        id: `css-lint-no-code-${filePath}-${Date.now()}`,
+        type: 'error',
+        message: 'No CSS code provided to lint.',
+        details: `File: ${filePath}`,
+        rule: 'stylelint-no-code',
+      });
+      return new Response(JSON.stringify({ issues: lintIssues }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+    }
+
+    const stylelintConfig: StylelintConfig = {
+      rules: {
+        'declaration-block-trailing-semicolon': 'always',
+        'block-no-empty': true,
+        // Add other specific, simple rules here if needed.
+        // Avoid complex rules or plugins that might cause dynamic import issues.
+      },
+      // It's generally safer to avoid `extends` in serverless environments if they cause issues.
+      // extends: ['stylelint-config-standard'], 
+    };
+
+    const linterResult: LinterResult = await stylelint.lint({
+      code: cssCode,
+      codeFilename: filePath,
+      config: stylelintConfig,
+      fix: false, // Set to true if you want Stylelint to attempt fixes (not recommended for API)
+    });
     
-    // To acknowledge the request body was received (even if not used for linting):
-    // const body = await request.json(); 
-    // console.log('Received CSS lint request, but Stylelint is bypassed. Body keys:', body ? Object.keys(body) : 'null');
+    // Process warnings from linterResult.results
+    if (linterResult.results && linterResult.results.length > 0) {
+      const resultOutput = linterResult.results[0];
+      resultOutput.warnings.forEach(warning => {
+        // Check if the warning is actually a CssSyntaxError disguised as a warning
+        const isParseErrorWarning = warning.text.includes('(CssSyntaxError)') || warning.rule === 'CssSyntaxError';
+        lintIssues.push(createIssueFromStylelintWarning(warning, filePath, isParseErrorWarning));
+      });
+
+      // If there are parseErrors, ensure they are captured as critical.
+      // Stylelint sometimes puts CssSyntaxError in `warnings` and sometimes in `parseErrors`.
+      if (resultOutput.parseErrors && resultOutput.parseErrors.length > 0) {
+        resultOutput.parseErrors.forEach(parseError => {
+          // Avoid duplicating if already added from warnings.
+          const existingIssue = lintIssues.find(
+            (issue) =>
+              issue.rule === 'css-syntax-error' &&
+              issue.details?.includes(`Line: ${parseError.line}, Col: ${parseError.column}`) &&
+              issue.message.includes(parseError.text.replace(/\s*\(CssSyntaxError\)$/i, ''))
+          );
+          if (!existingIssue) {
+            // Treat as a warning object for consistent processing.
+            const syntheticWarning: Warning = {
+              line: parseError.line || 0,
+              column: parseError.column || 0,
+              rule: parseError.stylelintType || 'CssSyntaxError', // Use stylelintType or a default
+              severity: 'error',
+              text: parseError.text || 'Syntax error during parsing.',
+            };
+            lintIssues.push(createIssueFromStylelintWarning(syntheticWarning, filePath, true));
+          }
+        });
+      }
+    }
 
 
-    // --- End of temporarily bypassed section ---
+    // If Stylelint itself reported an error state (e.g., bad config, unrecoverable parse error not in warnings)
+    // and we haven't captured specific syntax errors from warnings/parseErrors that explain it.
+    if (linterResult.errored && lintIssues.filter(i => i.type === 'error' && i.rule && i.rule.startsWith('css-syntax')).length === 0) {
+        // Try to find if there's a more specific error message within the output
+        const genericErrorText = typeof linterResult.output === 'string' ? linterResult.output : JSON.stringify(linterResult.output);
+        const primaryResult = linterResult.results?.[0];
+        
+        if (primaryResult?.invalidOptionWarnings?.length > 0) {
+            primaryResult.invalidOptionWarnings.forEach(optWarning => {
+                lintIssues.push({
+                    id: `css-lint-config-invalid-option-${filePath}-${Math.random().toString(36).substring(2, 9)}`,
+                    type: 'error',
+                    message: `Stylelint configuration error: Invalid option for rule.`,
+                    details: `${optWarning.text} File: ${filePath}`,
+                    rule: 'stylelint-config-error',
+                });
+            });
+        } else {
+             lintIssues.push({
+                id: `css-lint-operational-error-${filePath}-${Date.now()}`,
+                type: 'error',
+                message: 'Stylelint encountered an operational error.',
+                details: `File: ${filePath}. Output: ${genericErrorText.substring(0, 500)}`,
+                rule: 'stylelint-operational-error',
+            });
+        }
+    }
+
+
+    if (lintIssues.length === 0 && cssCode.trim().length > 0) {
+        // Optionally, add a success message if no issues were found for non-empty CSS
+        // lintIssues.push({
+        //     id: `css-lint-success-${filePath}-${Date.now()}`,
+        //     type: 'success', // You'd need to add 'success' to ValidationIssue type
+        //     message: 'CSS linting completed with no issues found.',
+        //     details: `File: ${filePath}`,
+        //     rule: 'stylelint-no-issues',
+        // });
+    }
+
 
     return new Response(JSON.stringify({ issues: lintIssues }), { status: 200, headers: { 'Content-Type': 'application/json' } });
 
   } catch (error: any) {
-    // Log the error for server-side inspection
-    console.error('Critical error in /api/lint-css POST handler (Stylelint bypassed state):', error);
+    console.error(`Critical error in /api/lint-css POST handler for ${filePath}:`, error);
     
-    // Construct a user-friendly error to return
-    const criticalErrorIssue: ValidationIssue = {
-        id: `css-critical-server-error-${Math.random().toString(36).substring(2, 9)}`,
-        type: 'error',
-        message: 'Failed to process CSS request due to a server-side exception.', // More generic as Stylelint isn't the direct cause now
-        details: error.message || String(error) || 'An unknown server error occurred.',
-        rule: 'stylelint-server-exception', // Keep rule for consistency if client expects it
-    };
-    // Return a 500, but still try to make it JSON for the client.
+    const criticalErrorIssue = createCriticalParseErrorIssue(error, filePath);
+    
     return new Response(JSON.stringify({ issues: [criticalErrorIssue] }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }
 }
