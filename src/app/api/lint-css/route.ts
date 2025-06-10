@@ -68,38 +68,33 @@ export async function POST(request: NextRequest) {
       return new Response(JSON.stringify({ issues: lintIssues }), { status: 400, headers: { 'Content-Type': 'application/json' } });
     }
 
+    // Use a very minimal, direct Stylelint configuration
     const stylelintConfig: StylelintConfig = {
       rules: {
-        'declaration-block-trailing-semicolon': 'always',
-        'block-no-empty': true,
-        // Add other specific, simple rules here if needed.
-        // Avoid complex rules or plugins that might cause dynamic import issues.
+        'declaration-block-trailing-semicolon': 'always', // Checks for missing semicolons at the end of declaration blocks
+        'block-no-empty': true, // Checks for empty blocks (e.g., {}), which can indicate missing braces
+        // Add other simple, direct rules here if needed and if they don't cause path issues.
+        // Avoid 'extends' or complex plugins that might cause dynamic import/path resolution problems in serverless environments.
       },
-      // It's generally safer to avoid `extends` in serverless environments if they cause issues.
-      // extends: ['stylelint-config-standard'], 
     };
 
     const linterResult: LinterResult = await stylelint.lint({
       code: cssCode,
-      codeFilename: filePath,
+      codeFilename: filePath, // This should be a string
       config: stylelintConfig,
-      fix: false, // Set to true if you want Stylelint to attempt fixes (not recommended for API)
+      fix: false, 
     });
     
-    // Process warnings from linterResult.results
     if (linterResult.results && linterResult.results.length > 0) {
       const resultOutput = linterResult.results[0];
+      
       resultOutput.warnings.forEach(warning => {
-        // Check if the warning is actually a CssSyntaxError disguised as a warning
         const isParseErrorWarning = warning.text.includes('(CssSyntaxError)') || warning.rule === 'CssSyntaxError';
         lintIssues.push(createIssueFromStylelintWarning(warning, filePath, isParseErrorWarning));
       });
 
-      // If there are parseErrors, ensure they are captured as critical.
-      // Stylelint sometimes puts CssSyntaxError in `warnings` and sometimes in `parseErrors`.
       if (resultOutput.parseErrors && resultOutput.parseErrors.length > 0) {
         resultOutput.parseErrors.forEach(parseError => {
-          // Avoid duplicating if already added from warnings.
           const existingIssue = lintIssues.find(
             (issue) =>
               issue.rule === 'css-syntax-error' &&
@@ -107,11 +102,10 @@ export async function POST(request: NextRequest) {
               issue.message.includes(parseError.text.replace(/\s*\(CssSyntaxError\)$/i, ''))
           );
           if (!existingIssue) {
-            // Treat as a warning object for consistent processing.
             const syntheticWarning: Warning = {
               line: parseError.line || 0,
               column: parseError.column || 0,
-              rule: parseError.stylelintType || 'CssSyntaxError', // Use stylelintType or a default
+              rule: parseError.stylelintType || 'CssSyntaxError',
               severity: 'error',
               text: parseError.text || 'Syntax error during parsing.',
             };
@@ -121,11 +115,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-
-    // If Stylelint itself reported an error state (e.g., bad config, unrecoverable parse error not in warnings)
-    // and we haven't captured specific syntax errors from warnings/parseErrors that explain it.
     if (linterResult.errored && lintIssues.filter(i => i.type === 'error' && i.rule && i.rule.startsWith('css-syntax')).length === 0) {
-        // Try to find if there's a more specific error message within the output
         const genericErrorText = typeof linterResult.output === 'string' ? linterResult.output : JSON.stringify(linterResult.output);
         const primaryResult = linterResult.results?.[0];
         
@@ -150,26 +140,24 @@ export async function POST(request: NextRequest) {
         }
     }
 
-
-    if (lintIssues.length === 0 && cssCode.trim().length > 0) {
-        // Optionally, add a success message if no issues were found for non-empty CSS
-        // lintIssues.push({
-        //     id: `css-lint-success-${filePath}-${Date.now()}`,
-        //     type: 'success', // You'd need to add 'success' to ValidationIssue type
-        //     message: 'CSS linting completed with no issues found.',
-        //     details: `File: ${filePath}`,
-        //     rule: 'stylelint-no-issues',
-        // });
-    }
-
-
     return new Response(JSON.stringify({ issues: lintIssues }), { status: 200, headers: { 'Content-Type': 'application/json' } });
 
   } catch (error: any) {
     console.error(`Critical error in /api/lint-css POST handler for ${filePath}:`, error);
     
+    // If the error is the specific TypeError we encountered
+    if (error instanceof TypeError && error.message.includes('The "path" argument must be of type string')) {
+        const pathErrorIssue: ValidationIssue = {
+            id: `css-critical-path-type-error-${filePath}-${Math.random().toString(36).substring(2, 9)}`,
+            type: 'error',
+            message: 'Internal server error during CSS linting: Path argument type error.',
+            details: `A path argument provided to an internal function was not a string. This can sometimes happen with how Stylelint or its dependencies handle file paths in certain environments. Original error: ${error.message}`,
+            rule: 'stylelint-path-type-error',
+        };
+        return new Response(JSON.stringify({ issues: [pathErrorIssue] }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+    }
+
     const criticalErrorIssue = createCriticalParseErrorIssue(error, filePath);
-    
     return new Response(JSON.stringify({ issues: [criticalErrorIssue] }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }
 }
