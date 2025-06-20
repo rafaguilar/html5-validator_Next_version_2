@@ -60,10 +60,9 @@ const resolveAssetPathInZip = (assetPath: string, baseFilePath: string, zip: JSZ
   const cleanedAssetPath = stripQueryString(assetPath);
 
   if (cleanedAssetPath.startsWith('data:') || cleanedAssetPath.startsWith('http:') || cleanedAssetPath.startsWith('https:') || cleanedAssetPath.startsWith('//')) {
-    return cleanedAssetPath; // External or data URI, considered "resolved" as is
+    return cleanedAssetPath; 
   }
 
-  // Attempt to resolve relative to the base file's directory
   let basePathSegments = baseFilePath.includes('/') ? baseFilePath.split('/').slice(0, -1) : [];
   const assetPathSegments = cleanedAssetPath.split('/');
   let combinedSegments = [...basePathSegments];
@@ -80,13 +79,12 @@ const resolveAssetPathInZip = (assetPath: string, baseFilePath: string, zip: JSZ
   const resolvedPathRelative = combinedSegments.join('/');
   const zipFileObjectRelative = zip.file(resolvedPathRelative);
   if (zipFileObjectRelative) {
-    return zipFileObjectRelative.name; // Use canonical name from JSZip
+    return zipFileObjectRelative.name; 
   }
 
-  // Fallback: Attempt to resolve from the root of the ZIP
   const zipFileObjectRoot = zip.file(cleanedAssetPath);
   if (zipFileObjectRoot) {
-    return zipFileObjectRoot.name; // Use canonical name from JSZip
+    return zipFileObjectRoot.name; 
   }
   
   const lowerCleanedAssetPath = cleanedAssetPath.toLowerCase();
@@ -701,7 +699,7 @@ const lintHtmlContent = (htmlString: string): ValidationIssue[] => {
   const ruleset: RuleSet = {
     'tag-pair': true,
     'attr-lowercase': true,
-    'attr-value-double-quotes': 'warning',
+    'attr-value-double-quotes': 'warning', 
     'doctype-first': false, 
     'spec-char-escape': true,
     'id-unique': true,
@@ -715,18 +713,19 @@ const lintHtmlContent = (htmlString: string): ValidationIssue[] => {
   const messages = HTMLHint.verify(htmlString, ruleset);
   return messages.map((msg: LintResult) => {
     let issueType: 'error' | 'warning' | 'info';
-    
-    if (msg.type === 'error') {
-      issueType = 'error';
-    } else if (msg.type === 'warning') {
-      issueType = 'warning';
-    } else {
-      issueType = 'info'; 
-    }
-
     let detailsText = `Line: ${msg.line}, Col: ${msg.col}, Rule: ${msg.rule.id}`;
-    if (msg.rule.id === 'attr-value-double-quotes' && issueType === 'warning') {
+
+    if (msg.rule.id === 'attr-value-double-quotes') {
+      issueType = 'warning'; 
       detailsText += `. Note: Using single quotes for attribute values is now a warning. Double quotes are best practice to ensure consistency and prevent errors if the attribute value itself contains a single quote. HTML technically allows single quotes, but this deviation from the common standard might be flagged by stricter platforms.`;
+    } else {
+      if (msg.type === 'error') {
+        issueType = 'error';
+      } else if (msg.type === 'warning') {
+        issueType = 'warning';
+      } else {
+        issueType = 'info'; 
+      }
     }
     
     return createIssuePageClient(
@@ -1068,3 +1067,6 @@ export default function HomePage() {
     </div>
   );
 }
+
+
+    
