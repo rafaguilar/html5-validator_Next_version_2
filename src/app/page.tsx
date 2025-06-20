@@ -41,6 +41,7 @@ interface CreativeAssetAnalysis {
   htmlFileCount: number;
   allHtmlFilePathsInZip: string[];
   isAdobeAnimateProject: boolean;
+  isCreatopyProject: boolean; // New field for Creatopy detection
 }
 
 
@@ -296,7 +297,7 @@ const parseAnimateManifest = async (
   referencedAssetPathsCollector: Set<string>,
   formatIssuesCollector: ValidationIssue[]
 ): Promise<void> => {
-  const manifestRegex = /manifest\s*:\s*(\[[\s\S]*?\])/;
+  const manifestRegex = /manifest\s*:\s*(\[[\s\S]*?\])/; // Corrected regex for object literal
   const manifestMatch = jsContent.match(manifestRegex);
 
   if (manifestMatch && manifestMatch[1]) {
@@ -350,6 +351,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
   let htmlFileCount = 0;
   let allHtmlFilePathsInZip: string[] = [];
   let isAdobeAnimateProject = false;
+  let isCreatopyProject = false; // Initialize Creatopy flag
   let mainAnimateJsContent: string | undefined;
   let mainAnimateJsPath: string | undefined; 
 
@@ -364,7 +366,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
     const htmlFileInfo = await findHtmlFileInZip(zip);
 
     if (!htmlFileInfo) {
-      return { missingAssets, unreferencedFiles: allZipFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, formatIssues, hasNonCdnExternalScripts, htmlFileCount, allHtmlFilePathsInZip, isAdobeAnimateProject };
+      return { missingAssets, unreferencedFiles: allZipFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, formatIssues, hasNonCdnExternalScripts, htmlFileCount, allHtmlFilePathsInZip, isAdobeAnimateProject, isCreatopyProject };
     }
 
     foundHtmlPath = htmlFileInfo.path; 
@@ -375,15 +377,21 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
     htmlContentForAnalysis = htmlFileInfo.content;
     const doc = new DOMParser().parseFromString(htmlContentForAnalysis, 'text/html');
 
+    if (htmlContentForAnalysis.includes("window.creatopyEmbed")) {
+      isCreatopyProject = true;
+      formatIssues.push(createIssuePageClient(
+        'info',
+        'Creatopy project detected.',
+        'This creative appears to be authored with Creatopy. Creatopy has particularities, such as sometimes omitting quotes for certain HTML attribute values (e.g., name, content, charset, data-eltype, id). While HTML5 allows unquoted attribute values if they don\'t contain spaces or special characters, double quotes are generally recommended for consistency.',
+        'authoring-tool-creatopy'
+      ));
+    }
+
+
     const animateMeta = doc.querySelector('meta[name="authoring-tool"][content="Adobe_Animate_CC"]');
     if (animateMeta) {
       isAdobeAnimateProject = true;
-      formatIssues.push(createIssuePageClient(
-        'info',
-        'Adobe Animate CC project detected.',
-        `This creative appears to be authored with Adobe Animate CC. Specific checks for Animate structure will be performed (HTML: ${foundHtmlPath}).`,
-        'authoring-tool-animate-cc'
-      ));
+      // This info message is now added in buildValidationResult to avoid duplication if also Creatopy
     }
 
     const linkedStylesheets = Array.from(doc.querySelectorAll('link[rel="stylesheet"]'));
@@ -658,11 +666,11 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
         }
     });
 
-    return { missingAssets, unreferencedFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, formatIssues, hasNonCdnExternalScripts, htmlFileCount, allHtmlFilePathsInZip, isAdobeAnimateProject };
+    return { missingAssets, unreferencedFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, formatIssues, hasNonCdnExternalScripts, htmlFileCount, allHtmlFilePathsInZip, isAdobeAnimateProject, isCreatopyProject };
 
   } catch (error: any) {
     cssLintIssues.push(createIssuePageClient('error', `Critical error analyzing ZIP file ${file.name}.`, error.message, 'zip-analysis-error'));
-    return { missingAssets, unreferencedFiles: [], foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, formatIssues, hasNonCdnExternalScripts, htmlFileCount, allHtmlFilePathsInZip, isAdobeAnimateProject };
+    return { missingAssets, unreferencedFiles: [], foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, formatIssues, hasNonCdnExternalScripts, htmlFileCount, allHtmlFilePathsInZip, isAdobeAnimateProject, isCreatopyProject };
   }
 };
 
@@ -693,13 +701,13 @@ const findClickTagsInHtml = (htmlContent: string | null): ClickTagInfo[] => {
   return clickTags;
 };
 
-const lintHtmlContent = (htmlString: string): ValidationIssue[] => {
+const lintHtmlContent = (htmlString: string, isCreatopyProject?: boolean): ValidationIssue[] => {
   if (!htmlString) return [];
 
   const ruleset: RuleSet = {
     'tag-pair': true,
     'attr-lowercase': true,
-    'attr-value-double-quotes': 'warning', 
+    'attr-value-double-quotes': 'warning', // Base rule is warning
     'doctype-first': false, 
     'spec-char-escape': true,
     'id-unique': true,
@@ -716,9 +724,15 @@ const lintHtmlContent = (htmlString: string): ValidationIssue[] => {
     let detailsText = `Line: ${msg.line}, Col: ${msg.col}, Rule: ${msg.rule.id}`;
 
     if (msg.rule.id === 'attr-value-double-quotes') {
-      issueType = 'warning'; 
-      detailsText += `. Note: Using single quotes for attribute values is now a warning. Double quotes are best practice to ensure consistency and prevent errors if the attribute value itself contains a single quote. HTML technically allows single quotes, but this deviation from the common standard might be flagged by stricter platforms.`;
+      if (isCreatopyProject) {
+        issueType = 'info'; // For Creatopy, make unquoted/single-quoted attributes informational
+        detailsText += `. Creatopy often uses unquoted or single-quoted attributes. While HTML5 allows unquoted values if they don't contain spaces or special characters, and single quotes are permissible, double quotes are generally recommended for best practice and broader compatibility.`;
+      } else {
+        issueType = 'warning'; // For others, it's a warning
+        detailsText += `. Note: Using single quotes or omitting quotes for attribute values is now a warning. Double quotes are best practice to ensure consistency and prevent errors if the attribute value itself contains a single quote or special characters.`;
+      }
     } else {
+      // Standard classification for other rules
       if (msg.type === 'error') {
         issueType = 'error';
       } else if (msg.type === 'warning') {
@@ -758,7 +772,7 @@ const buildValidationResult = async (
     ));
   }
   
-  if (analysis.isAdobeAnimateProject) {
+  if (analysis.isAdobeAnimateProject && !analysis.isCreatopyProject) { // Avoid double-messaging if Creatopy already logged tool info
       issues.push(createIssuePageClient(
         'info',
         'Adobe Animate CC project detected.',
@@ -828,7 +842,7 @@ const buildValidationResult = async (
 
 
   if (analysis.htmlContent) {
-    const lintingIssues = lintHtmlContent(analysis.htmlContent);
+    const lintingIssues = lintHtmlContent(analysis.htmlContent, analysis.isCreatopyProject);
     issues.push(...lintingIssues);
   }
 
@@ -847,11 +861,11 @@ const buildValidationResult = async (
   }
 
   if (analysis.htmlContent) {
-    const metaTagRegex = /<meta\s+name=["']ad\.size["']\s+content=["']([^"']+)["'][^>]*>/i;
+    const metaTagRegex = /<meta\s+name=(?:["']?ad\.size["']?)\s+content=(?:["']?([^"'>]+)["']?)[^>]*>/i; // Allow unquoted name/content
     const metaTagMatch = analysis.htmlContent.match(metaTagRegex);
     if (metaTagMatch && metaTagMatch[1]) {
       adSizeMetaTagContent = metaTagMatch[1];
-      const metaDimRegex = /width=([^,;\s"]+)[,;]?\s*height=([^,;\s"]+)/i;
+      const metaDimRegex = /width=(\d+)[,;]?\s*height=(\d+)/i;
       const metaDimValMatch = adSizeMetaTagContent.match(metaDimRegex);
 
       if (metaDimValMatch && metaDimValMatch[1] && metaDimValMatch[2]) {
@@ -861,10 +875,12 @@ const buildValidationResult = async (
         const parsedWidth = parseInt(widthStr, 10);
         const parsedHeight = parseInt(heightStr, 10);
 
-        const isWidthValid = !isNaN(parsedWidth) && parsedWidth.toString() === widthStr;
-        const isHeightValid = !isNaN(parsedHeight) && parsedHeight.toString() === heightStr;
+        // Check if string values are purely numeric
+        const isWidthValidNumber = /^\d+$/.test(widthStr);
+        const isHeightValidNumber = /^\d+$/.test(heightStr);
 
-        if (isWidthValid && isHeightValid) {
+
+        if (!isNaN(parsedWidth) && isWidthValidNumber && !isNaN(parsedHeight) && isHeightValidNumber) {
           actualMetaWidth = parsedWidth;
           actualMetaHeight = parsedHeight;
         } else {
