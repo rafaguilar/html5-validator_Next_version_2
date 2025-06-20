@@ -559,7 +559,7 @@ const lintHtmlContent = (htmlString: string): ValidationIssue[] => {
   const ruleset: RuleSet = {
     'tag-pair': true,
     'attr-lowercase': true,
-    'attr-value-double-quotes': true,
+    'attr-value-double-quotes': 'warning', // Changed from true to 'warning'
     'doctype-first': false, 
     'spec-char-escape': true,
     'id-unique': true,
@@ -575,6 +575,8 @@ const lintHtmlContent = (htmlString: string): ValidationIssue[] => {
     let issueType: 'error' | 'warning' | 'info' = 'warning'; 
     if (msg.type === 'error') { 
       issueType = 'error';
+    } else if (msg.type === 'warning') {
+      issueType = 'warning';
     }
     return createIssuePageClient(
       issueType,
