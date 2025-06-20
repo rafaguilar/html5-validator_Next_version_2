@@ -84,26 +84,21 @@ const resolveAssetPathInZip = (assetPath: string, baseFilePath: string, zip: JSZ
   }
 
   // Fallback: Attempt to resolve from the root of the ZIP
-  // This helps if baseFilePath is misleading or paths are semi-absolute within the zip
   const zipFileObjectRoot = zip.file(cleanedAssetPath);
   if (zipFileObjectRoot) {
     return zipFileObjectRoot.name; // Use canonical name from JSZip
   }
   
-  // Try case-insensitive match as a last resort for paths within the same directory as baseFilePath or at root
-  // This is computationally more expensive and should be a fallback.
   const lowerCleanedAssetPath = cleanedAssetPath.toLowerCase();
   for (const zipFileName in zip.files) {
     if (zip.files[zipFileName].dir) continue;
 
-    // Check relative to baseFilePath's directory (case-insensitive)
     const potentialRelativePath = [...basePathSegments, cleanedAssetPath.split('/').pop() || ''].join('/');
     if (potentialRelativePath.toLowerCase() === zipFileName.toLowerCase()) {
         const fileObj = zip.file(zipFileName);
         if (fileObj) return fileObj.name;
     }
     
-    // Check from root (case-insensitive)
     if (zipFileName.toLowerCase() === lowerCleanedAssetPath) {
         const fileObj = zip.file(zipFileName);
         if (fileObj) return fileObj.name;
@@ -111,7 +106,7 @@ const resolveAssetPathInZip = (assetPath: string, baseFilePath: string, zip: JSZ
   }
 
 
-  return null; // Asset not found
+  return null; 
 };
 
 
@@ -136,7 +131,7 @@ const findHtmlFileInZip = async (zip: JSZip): Promise<{ path: string, content: s
       const htmlFileObject = zip.file(shortestDepthIndexHtml);
       if (htmlFileObject) {
         const content = await htmlFileObject.async("string");
-        return { path: htmlFileObject.name, content }; // Use canonical name
+        return { path: htmlFileObject.name, content }; 
       }
   }
 
@@ -159,7 +154,7 @@ const findHtmlFileInZip = async (zip: JSZip): Promise<{ path: string, content: s
       const htmlFileObject = zip.file(shortestDepthAnyHtml);
       if (htmlFileObject) {
         const content = await htmlFileObject.async("string");
-        return { path: htmlFileObject.name, content }; // Use canonical name
+        return { path: htmlFileObject.name, content }; 
       }
   }
 
@@ -226,7 +221,7 @@ async function lintCssContentViaAPI(cssText: string, filePath: string): Promise<
 
 const processCssContentAndCollectReferences = async (
   cssContent: string,
-  cssFilePath: string, // Canonical path from JSZip
+  cssFilePath: string, 
   zip: JSZip,
   missingAssetsCollector: MissingAssetInfo[],
   referencedAssetPathsCollector: Set<string>,
@@ -241,19 +236,19 @@ const processCssContentAndCollectReferences = async (
 
   while ((match = urlPattern.exec(cssContent)) !== null) {
     const originalUrl = match[0];
-    const assetUrlFromCss = match[2]; // This is the path as written in CSS
+    const assetUrlFromCss = match[2]; 
     const cleanedAssetUrl = stripQueryString(assetUrlFromCss);
 
 
     if (cleanedAssetUrl.startsWith('data:') || cleanedAssetUrl.startsWith('http:') || cleanedAssetUrl.startsWith('https:') || cleanedAssetUrl.startsWith('//')) {
-      continue; // Skip external or data URIs
+      continue; 
     }
 
     const resolvedAssetZipPath = resolveAssetPathInZip(cleanedAssetUrl, cssFilePath, zip);
 
     if (resolvedAssetZipPath && zip.file(resolvedAssetZipPath)) {
-        const zipFileObject = zip.file(resolvedAssetZipPath)!; // We know it exists
-        referencedAssetPathsCollector.add(zipFileObject.name); // Add canonical name
+        const zipFileObject = zip.file(resolvedAssetZipPath)!; 
+        referencedAssetPathsCollector.add(zipFileObject.name); 
         const extension = zipFileObject.name.substring(zipFileObject.name.lastIndexOf('.')).toLowerCase();
         if (extension && !ALLOWED_IMAGE_EXTENSIONS.includes(extension)) {
           formatIssuesCollector.push(createIssuePageClient(
@@ -266,7 +261,7 @@ const processCssContentAndCollectReferences = async (
     } else {
       missingAssetsCollector.push({
         type: 'cssRef',
-        path: cleanedAssetUrl, // The path as found in CSS
+        path: cleanedAssetUrl, 
         referencedFrom: cssFilePath,
         originalSrc: originalUrl
       });
@@ -296,35 +291,33 @@ const checkDynamicImageLoader = (
 
 const parseAnimateManifest = async (
   jsContent: string,
-  jsFilePath: string, // Canonical path of the JS file itself
-  htmlFilePath: string, // Canonical path of the HTML file
+  jsFilePath: string, 
+  htmlFilePath: string, 
   zip: JSZip,
   missingAssetsCollector: MissingAssetInfo[],
   referencedAssetPathsCollector: Set<string>,
   formatIssuesCollector: ValidationIssue[]
 ): Promise<void> => {
-  const manifestRegex = /manifest\s*:\s*(\[[\s\S]*?\])/; // Corrected regex for object key
+  const manifestRegex = /manifest\s*:\s*(\[[\s\S]*?\])/;
   const manifestMatch = jsContent.match(manifestRegex);
 
   if (manifestMatch && manifestMatch[1]) {
     const manifestArrayString = manifestMatch[1];
-    // Regex to find src:"path" within the manifest array string
     const srcRegex = /\bsrc\s*:\s*"([^"]+)"/g;
     let srcMatch;
     while ((srcMatch = srcRegex.exec(manifestArrayString)) !== null) {
-      const originalSrcPath = srcMatch[1]; // Path as in manifest, possibly with query string
-      const cleanedManifestAssetPath = stripQueryString(originalSrcPath); // Path without query string
+      const originalSrcPath = srcMatch[1]; 
+      const cleanedManifestAssetPath = stripQueryString(originalSrcPath); 
 
       if (cleanedManifestAssetPath.startsWith('data:') || cleanedManifestAssetPath.startsWith('http:') || cleanedManifestAssetPath.startsWith('https:') || cleanedManifestAssetPath.startsWith('//')) {
         continue;
       }
 
-      // Resolve this cleaned path relative to the HTML file's location as a primary strategy for Animate assets
       const resolvedAssetZipPath = resolveAssetPathInZip(cleanedManifestAssetPath, htmlFilePath, zip);
 
       if (resolvedAssetZipPath && zip.file(resolvedAssetZipPath)) {
-        const zipFileObject = zip.file(resolvedAssetZipPath)!; // We know it exists
-        referencedAssetPathsCollector.add(zipFileObject.name); // Add canonical name
+        const zipFileObject = zip.file(resolvedAssetZipPath)!; 
+        referencedAssetPathsCollector.add(zipFileObject.name); 
         const extension = zipFileObject.name.substring(zipFileObject.name.lastIndexOf('.')).toLowerCase();
         if (extension && !ALLOWED_IMAGE_EXTENSIONS.includes(extension)) {
           formatIssuesCollector.push(createIssuePageClient(
@@ -337,9 +330,9 @@ const parseAnimateManifest = async (
       } else {
         missingAssetsCollector.push({
           type: 'jsManifestImg',
-          path: cleanedManifestAssetPath, // The path expected to be in ZIP
+          path: cleanedManifestAssetPath, 
           referencedFrom: jsFilePath,
-          originalSrc: originalSrcPath // The path as it appeared in manifest
+          originalSrc: originalSrcPath 
         });
       }
     }
@@ -360,7 +353,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
   let allHtmlFilePathsInZip: string[] = [];
   let isAdobeAnimateProject = false;
   let mainAnimateJsContent: string | undefined;
-  let mainAnimateJsPath: string | undefined; // Canonical path for the main JS
+  let mainAnimateJsPath: string | undefined; 
 
 
   try {
@@ -376,11 +369,11 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
       return { missingAssets, unreferencedFiles: allZipFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, formatIssues, hasNonCdnExternalScripts, htmlFileCount, allHtmlFilePathsInZip, isAdobeAnimateProject };
     }
 
-    foundHtmlPath = htmlFileInfo.path; // Canonical path from findHtmlFileInZip
+    foundHtmlPath = htmlFileInfo.path; 
     if (foundHtmlPath.includes('/')) {
         zipBaseDir = foundHtmlPath.substring(0, foundHtmlPath.lastIndexOf('/') + 1);
     }
-    referencedAssetPaths.add(foundHtmlPath); // Add canonical HTML path
+    referencedAssetPaths.add(foundHtmlPath); 
     htmlContentForAnalysis = htmlFileInfo.content;
     const doc = new DOMParser().parseFromString(htmlContentForAnalysis, 'text/html');
 
@@ -401,13 +394,13 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
     for (const linkTag of linkedStylesheets) {
       const href = linkTag.getAttribute('href');
       if (href) {
-        const cleanedHrefOriginal = stripQueryString(href); // Original path for error reporting if needed
+        const cleanedHrefOriginal = stripQueryString(href); 
         if (!cleanedHrefOriginal.startsWith('http:') && !cleanedHrefOriginal.startsWith('https:') && !cleanedHrefOriginal.startsWith('data:')) {
             const cssFileZipPath = resolveAssetPathInZip(cleanedHrefOriginal, foundHtmlPath, zip);
             if (cssFileZipPath && zip.file(cssFileZipPath)) {
                 const cssFileObject = zip.file(cssFileZipPath)!;
-                if (!processedCssPaths.has(cssFileObject.name)) { // Check canonical path
-                    referencedAssetPaths.add(cssFileObject.name); // Add canonical path
+                if (!processedCssPaths.has(cssFileObject.name)) { 
+                    referencedAssetPaths.add(cssFileObject.name); 
                     processedCssPaths.add(cssFileObject.name);
                     const cssContent = await cssFileObject.async('string');
                     await processCssContentAndCollectReferences(cssContent, cssFileObject.name, zip, missingAssets, referencedAssetPaths, cssLintIssues, formatIssues);
@@ -419,7 +412,6 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
       }
     }
 
-    // Attempt to auto-detect common CSS files if no <link> tags were explicit or to catch others
     const commonCssSuffixes = ['style.css', 'css/style.css', 'main.css', 'css/main.css'];
     for (const suffix of commonCssSuffixes) {
         const potentialCssPath = zipBaseDir + suffix;
@@ -432,7 +424,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
                 const cssContent = await cssFileObject.async('string');
                 await processCssContentAndCollectReferences(cssContent, cssFileObject.name, zip, missingAssets, referencedAssetPaths, cssLintIssues, formatIssues);
             }
-        } else { // Try absolute path from root if zipBaseDir was used
+        } else { 
             const potentialAbsoluteCssPath = suffix;
             const resolvedAbsoluteCssPath = resolveAssetPathInZip(potentialAbsoluteCssPath, foundHtmlPath, zip);
             if (zipBaseDir !== '' && resolvedAbsoluteCssPath && zip.file(resolvedAbsoluteCssPath)) {
@@ -452,7 +444,6 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
     for (const styleTag of styleTags) {
         const inlineCssContent = styleTag.textContent || '';
         if (inlineCssContent.trim()) {
-            // For inline CSS, the 'cssFilePath' is the HTML file itself.
             await processCssContentAndCollectReferences(inlineCssContent, foundHtmlPath, zip, missingAssets, referencedAssetPaths, cssLintIssues, formatIssues);
         }
     }
@@ -467,7 +458,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
                 const assetFileZipPath = resolveAssetPathInZip(cleanedSrcAttrOriginal, foundHtmlPath, zip);
                 if (assetFileZipPath && zip.file(assetFileZipPath)) {
                     const assetFileObject = zip.file(assetFileZipPath)!;
-                    referencedAssetPaths.add(assetFileObject.name); // Add canonical path
+                    referencedAssetPaths.add(assetFileObject.name); 
                     const extension = assetFileObject.name.substring(assetFileObject.name.lastIndexOf('.')).toLowerCase();
                     if (extension && !ALLOWED_IMAGE_EXTENSIONS.includes(extension)) {
                         formatIssues.push(createIssuePageClient(
@@ -501,18 +492,14 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
                 const resolvedScriptZipPath = resolveAssetPathInZip(cleanedSrcAttrOriginal, foundHtmlPath, zip);
                 if (resolvedScriptZipPath && zip.file(resolvedScriptZipPath)) {
                     const jsFileObject = zip.file(resolvedScriptZipPath)!;
-                    referencedAssetPaths.add(jsFileObject.name); // Add canonical path
+                    referencedAssetPaths.add(jsFileObject.name); 
 
-                    // If it's an Animate CC project, try to identify its main JS file for manifest parsing
                     if (isAdobeAnimateProject && jsFileObject.name.toLowerCase().endsWith('.js')) {
                        const htmlFileNameWithoutExt = foundHtmlPath.substring(foundHtmlPath.lastIndexOf('/') + 1).replace(/\.html?$/i, '');
                        const scriptFileNameWithoutExt = jsFileObject.name.substring(jsFileObject.name.lastIndexOf('/') + 1).replace(/\.js$/i, '');
-                       // Heuristic: main Animate JS often matches HTML name or is the only root-level JS, or simply the one linked in HTML
-                       // For now, if one is linked, assume it could be the main one.
-                       // A more robust way might be needed if multiple JS files are linked.
                        if (!mainAnimateJsPath || scriptFileNameWithoutExt === htmlFileNameWithoutExt || jsFileObject.name.includes(htmlFileNameWithoutExt) || scriptElements.length === 1) {
                             mainAnimateJsContent = await jsFileObject.async('string');
-                            mainAnimateJsPath = jsFileObject.name; // Store canonical path
+                            mainAnimateJsPath = jsFileObject.name; 
                         }
                     }
                 } else {
@@ -545,7 +532,6 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
         }
     }
 
-    // Ensure manifest parsing happens after the main JS file content is potentially loaded
     if (isAdobeAnimateProject && mainAnimateJsContent && mainAnimateJsPath && foundHtmlPath) {
         await parseAnimateManifest(mainAnimateJsContent, mainAnimateJsPath, foundHtmlPath, zip, missingAssets, referencedAssetPaths, formatIssues);
     }
@@ -567,13 +553,9 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
 
     const allJsFilePathsInZipScan = allZipFiles.filter(path => path.toLowerCase().endsWith('.js'));
     for (const jsFilePath of allJsFilePathsInZipScan) {
-      if (jsFilePath === mainAnimateJsPath) continue; // Already processed if it was the main Animate JS
+      if (jsFilePath === mainAnimateJsPath) continue; 
         const jsFileObject = zip.file(jsFilePath);
         if (jsFileObject) {
-            // Avoid re-adding if already known (e.g., from script tag or manifest)
-            // if (!referencedAssetPaths.has(jsFileObject.name)) {
-            //    referencedAssetPaths.add(jsFileObject.name); // Add it if it wasn't linked but is in ZIP (for unref check later)
-            // }
             const jsContent = await jsFileObject.async('string');
             checkDynamicImageLoader(
                 jsContent,
@@ -603,20 +585,20 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
 
     const imagesFolderName = 'images';
     const imagesFolderPath = (zipBaseDir + imagesFolderName + '/').replace(/^\/+/, '');
-    const actualFilesInImagesFolder = new Map<string, string>(); // normalized filename -> canonical zip path
+    const actualFilesInImagesFolder = new Map<string, string>(); 
     let imagesFolderExists = false;
 
-    allZipFiles.forEach(zipFilePath => { // zipFilePath is canonical here
+    allZipFiles.forEach(zipFilePath => { 
       const lowerZipFilePath = zipFilePath.toLowerCase();
       const lowerImagesFolderPath = imagesFolderPath.toLowerCase();
         if (lowerZipFilePath.startsWith(lowerImagesFolderPath) && zipFilePath.length > imagesFolderPath.length) {
             imagesFolderExists = true;
             const fileNameInFolder = zipFilePath.substring(imagesFolderPath.length);
-            if (fileNameInFolder.includes('/')) return; // Only direct children of images/
+            if (fileNameInFolder.includes('/')) return; 
 
             const extensionMatch = fileNameInFolder.match(/\.([^.]+)$/);
             if (extensionMatch && ALLOWED_IMAGE_EXTENSIONS.includes(`.${extensionMatch[1].toLowerCase()}`)) {
-                 actualFilesInImagesFolder.set(fileNameInFolder.toLowerCase(), zipFilePath); // Store canonical path
+                 actualFilesInImagesFolder.set(fileNameInFolder.toLowerCase(), zipFilePath); 
             }
         }
     });
@@ -632,7 +614,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
             ));
         } else if (imagesFolderExists) {
             expectedImagesFromHtml.forEach(({ id, referencedFromHtml }, normalizedExpectedFilename) => {
-                const actualZipPath = actualFilesInImagesFolder.get(normalizedExpectedFilename); // canonical path
+                const actualZipPath = actualFilesInImagesFolder.get(normalizedExpectedFilename); 
                 if (!actualZipPath || !zip.file(actualZipPath) ) {
                     formatIssues.push(createIssuePageClient(
                         'error',
@@ -642,14 +624,14 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
                     ));
                 } else {
                     const zipFileObject = zip.file(actualZipPath)!;
-                    referencedAssetPaths.add(zipFileObject.name); // Add canonical path
+                    referencedAssetPaths.add(zipFileObject.name); 
                 }
             });
         }
     }
 
     if (imagesFolderExists) {
-        actualFilesInImagesFolder.forEach((zipFilePath, normalizedActualFilename) => { // zipFilePath is canonical
+        actualFilesInImagesFolder.forEach((zipFilePath, normalizedActualFilename) => { 
             const expectedByHtmlId = expectedImagesFromHtml.has(normalizedActualFilename);
             const alreadyReferenced = referencedAssetPaths.has(zipFilePath);
 
@@ -669,10 +651,9 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
 
 
     const unreferencedFiles: string[] = [];
-    allZipFiles.forEach(filePathInZip => { // filePathInZip is canonical
+    allZipFiles.forEach(filePathInZip => { 
         if (!referencedAssetPaths.has(filePathInZip) && filePathInZip !== foundHtmlPath) {
             if (htmlFileCount > 1 && allHtmlFilePathsInZip.includes(filePathInZip)) {
-                 // Don't mark other HTML files as unreferenced if multiple exist, that's a separate error.
             } else {
                  unreferencedFiles.push(filePathInZip);
             }
@@ -720,33 +701,32 @@ const lintHtmlContent = (htmlString: string): ValidationIssue[] => {
   const ruleset: RuleSet = {
     'tag-pair': true,
     'attr-lowercase': true,
-    'attr-value-double-quotes': 'warning', // Changed to warning
-    'doctype-first': false, // Typically handled by ad servers or not critical for banner internals
+    'attr-value-double-quotes': 'warning',
+    'doctype-first': false, 
     'spec-char-escape': true,
     'id-unique': true,
     'src-not-empty': true,
-    'tag-self-close': false, // HTML5 allows some void tags not to be self-closed
+    'tag-self-close': false, 
     'img-alt-require': true,
-    'head-script-disabled': false, // Scripts in head are common (e.g., libraries)
-    'style-disabled': false, // Inline styles or <style> tags are common
+    'head-script-disabled': false, 
+    'style-disabled': false, 
   };
 
   const messages = HTMLHint.verify(htmlString, ruleset);
   return messages.map((msg: LintResult) => {
     let issueType: 'error' | 'warning' | 'info';
     
-    // HTMLHint.verify respects the ruleset for severity. msg.type should reflect this.
     if (msg.type === 'error') {
       issueType = 'error';
     } else if (msg.type === 'warning') {
       issueType = 'warning';
     } else {
-      issueType = 'info'; // Fallback for any other HTMLHint types, though rare.
+      issueType = 'info'; 
     }
 
     let detailsText = `Line: ${msg.line}, Col: ${msg.col}, Rule: ${msg.rule.id}`;
     if (msg.rule.id === 'attr-value-double-quotes' && issueType === 'warning') {
-      detailsText += `. Note: Using single quotes for attribute values is now a warning. Double quotes are best practice to ensure consistency and prevent errors if the attribute value itself contains a single quote.`;
+      detailsText += `. Note: Using single quotes for attribute values is now a warning. Double quotes are best practice to ensure consistency and prevent errors if the attribute value itself contains a single quote. HTML technically allows single quotes, but this deviation from the common standard might be flagged by stricter platforms.`;
     }
     
     return createIssuePageClient(
@@ -778,6 +758,16 @@ const buildValidationResult = async (
       'multiple-html-files'
     ));
   }
+  
+  if (analysis.isAdobeAnimateProject) {
+      issues.push(createIssuePageClient(
+        'info',
+        'Adobe Animate CC project detected.',
+        `Based on '<meta name="authoring-tool" content="Adobe_Animate_CC">'. Specific checks for Animate structure and manifest parsing were applied.`,
+        'authoring-tool-animate-cc'
+      ));
+  }
+
 
   const detectedClickTags = findClickTagsInHtml(analysis.htmlContent || null);
 
@@ -834,8 +824,8 @@ const buildValidationResult = async (
     issues.push(createIssuePageClient('warning', `Unreferenced file in ZIP: '${unreferencedFilePath}'.`, `Consider removing if not used to reduce file size.`));
   }
 
-  issues.push(...analysis.cssLintIssues); // Add CSS linting issues
-  issues.push(...analysis.formatIssues); // Add other format/structural issues
+  issues.push(...analysis.cssLintIssues); 
+  issues.push(...analysis.formatIssues); 
 
 
   if (analysis.htmlContent) {
@@ -950,7 +940,7 @@ const buildValidationResult = async (
   } else if (hasWarnings) {
     status = 'warning';
   } else {
-    status = 'success'; // Success if no errors or warnings, 'info' messages are ok
+    status = 'success'; 
   }
 
 
@@ -994,7 +984,7 @@ export default function HomePage() {
             const tempDim = POSSIBLE_FALLBACK_DIMENSIONS[Math.floor(Math.random() * POSSIBLE_FALLBACK_DIMENSIONS.length)];
             initialWidth = tempDim.width;
             initialHeight = tempDim.height;
-        } else { // Default if no info at all
+        } else { 
             initialWidth = 300; 
             initialHeight = 250;
         }
@@ -1034,7 +1024,7 @@ export default function HomePage() {
             fileSize: file.size,
             maxFileSize: MAX_FILE_SIZE,
             fileStructureOk: false,
-            adDimensions: initialPendingResults[index].adDimensions, // Use initially determined dimensions
+            adDimensions: initialPendingResults[index].adDimensions, 
             hasCorrectTopLevelClickTag: false,
         };
         return errorResult;
@@ -1078,7 +1068,3 @@ export default function HomePage() {
     </div>
   );
 }
-
-    
-
-    
