@@ -56,7 +56,7 @@ const stripQueryString = (path: string): string => {
 };
 
 const resolveAssetPathInZip = (assetPath: string, baseFilePath: string, zip: JSZip): string | null => {
-  const cleanedAssetPath = stripQueryString(assetPath); // Clean path first
+  const cleanedAssetPath = stripQueryString(assetPath); 
 
   if (cleanedAssetPath.startsWith('data:') || cleanedAssetPath.startsWith('http:') || cleanedAssetPath.startsWith('https:') || cleanedAssetPath.startsWith('//')) {
     return cleanedAssetPath; 
@@ -79,7 +79,7 @@ const resolveAssetPathInZip = (assetPath: string, baseFilePath: string, zip: JSZ
   if (zip.file(resolvedPath)) {
     return resolvedPath;
   }
-  // Fallback for assets at root if not found with relative path, and original path didn't contain slashes (already cleaned)
+  
   if (!cleanedAssetPath.includes('/') && zip.file(cleanedAssetPath)) { 
     return cleanedAssetPath;
   }
@@ -105,8 +105,11 @@ const findHtmlFileInZip = async (zip: JSZip): Promise<{ path: string, content: s
   }
   
   if (shortestDepthIndexHtml && zip.file(shortestDepthIndexHtml)) {
-      const content = await zip.file(shortestDepthIndexHtml)!.async("string");
-      return { path: shortestDepthIndexHtml, content };
+      const htmlFileObject = zip.file(shortestDepthIndexHtml);
+      if (htmlFileObject) {
+        const content = await htmlFileObject.async("string");
+        return { path: htmlFileObject.name, content }; // Use canonical name
+      }
   }
 
   const anyHtmlCandidates = allFiles.filter(path => 
@@ -125,8 +128,11 @@ const findHtmlFileInZip = async (zip: JSZip): Promise<{ path: string, content: s
   }
 
   if (shortestDepthAnyHtml && zip.file(shortestDepthAnyHtml)) {
-      const content = await zip.file(shortestDepthAnyHtml)!.async("string");
-      return { path: shortestDepthAnyHtml, content };
+      const htmlFileObject = zip.file(shortestDepthAnyHtml);
+      if (htmlFileObject) {
+        const content = await htmlFileObject.async("string");
+        return { path: htmlFileObject.name, content }; // Use canonical name
+      }
   }
   
   return null;
@@ -217,16 +223,26 @@ const processCssContentAndCollectReferences = async (
 
     const resolvedAssetPath = resolveAssetPathInZip(cleanedAssetUrl, cssFilePath, zip);
 
-    if (resolvedAssetPath && zip.file(resolvedAssetPath)) {
-      referencedAssetPathsCollector.add(resolvedAssetPath);
-      const extension = resolvedAssetPath.substring(resolvedAssetPath.lastIndexOf('.')).toLowerCase();
-      if (extension && !ALLOWED_IMAGE_EXTENSIONS.includes(extension)) {
-        formatIssuesCollector.push(createIssuePageClient(
-          'error', 
-          `Unsupported image format used: '${resolvedAssetPath.split('/').pop()}' in CSS context ('${cssFilePath}').`,
-          `Allowed formats are: ${ALLOWED_IMAGE_EXTENSIONS.join(', ')}. Path: ${resolvedAssetPath}`,
-          'unsupported-css-image-format'
-        ));
+    if (resolvedAssetPath) {
+      const zipFileObject = zip.file(resolvedAssetPath);
+      if (zipFileObject) {
+        referencedAssetPathsCollector.add(zipFileObject.name); // Use canonical name
+        const extension = zipFileObject.name.substring(zipFileObject.name.lastIndexOf('.')).toLowerCase();
+        if (extension && !ALLOWED_IMAGE_EXTENSIONS.includes(extension)) {
+          formatIssuesCollector.push(createIssuePageClient(
+            'error', 
+            `Unsupported image format used: '${zipFileObject.name.split('/').pop()}' in CSS context ('${cssFilePath}').`,
+            `Allowed formats are: ${ALLOWED_IMAGE_EXTENSIONS.join(', ')}. Path: ${zipFileObject.name}`,
+            'unsupported-css-image-format'
+          ));
+        }
+      } else {
+         missingAssetsCollector.push({
+          type: 'cssRef',
+          path: cleanedAssetUrl, 
+          referencedFrom: cssFilePath,
+          originalSrc: originalUrl 
+        });
       }
     } else {
       missingAssetsCollector.push({
@@ -261,8 +277,8 @@ const checkDynamicImageLoader = (
 
 const parseAnimateManifest = (
   jsContent: string,
-  jsFilePath: string,
-  htmlFilePath: string,
+  jsFilePath: string, // Path of the JS file containing the manifest
+  htmlFilePath: string, // Path of the main HTML file, for base path resolution
   zip: JSZip,
   missingAssetsCollector: MissingAssetInfo[],
   referencedAssetPathsCollector: Set<string>,
@@ -276,25 +292,35 @@ const parseAnimateManifest = (
     const srcRegex = /\bsrc\s*:\s*"([^"]+)"/g;
     let srcMatch;
     while ((srcMatch = srcRegex.exec(manifestArrayString)) !== null) {
-      const originalSrcPath = srcMatch[1];
-      const cleanedManifestAssetPath = stripQueryString(originalSrcPath);
+      const originalSrcPath = srcMatch[1]; // e.g., "images/foo.png?cachebust"
+      const cleanedManifestAssetPath = stripQueryString(originalSrcPath); // e.g., "images/foo.png"
 
       if (cleanedManifestAssetPath.startsWith('data:') || cleanedManifestAssetPath.startsWith('http:') || cleanedManifestAssetPath.startsWith('https:') || cleanedManifestAssetPath.startsWith('//')) {
         continue;
       }
+      
+      const resolvedAssetPath = resolveAssetPathInZip(cleanedManifestAssetPath, htmlFilePath, zip);
 
-      const resolvedAssetPath = resolveAssetPathInZip(cleanedManifestAssetPath, htmlFilePath, zip); // Resolve relative to HTML
-
-      if (resolvedAssetPath && zip.file(resolvedAssetPath)) {
-        referencedAssetPathsCollector.add(resolvedAssetPath);
-        const extension = resolvedAssetPath.substring(resolvedAssetPath.lastIndexOf('.')).toLowerCase();
-        if (extension && !ALLOWED_IMAGE_EXTENSIONS.includes(extension)) {
-          formatIssuesCollector.push(createIssuePageClient(
-            'error',
-            `Unsupported image format '${resolvedAssetPath.split('/').pop()}' from JS manifest ('${jsFilePath}').`,
-            `Allowed formats: ${ALLOWED_IMAGE_EXTENSIONS.join(', ')}. Path: ${resolvedAssetPath}`,
-            'unsupported-js-manifest-image-format'
-          ));
+      if (resolvedAssetPath) {
+        const zipFileObject = zip.file(resolvedAssetPath);
+        if (zipFileObject) {
+          referencedAssetPathsCollector.add(zipFileObject.name); // Use canonical name
+          const extension = zipFileObject.name.substring(zipFileObject.name.lastIndexOf('.')).toLowerCase();
+          if (extension && !ALLOWED_IMAGE_EXTENSIONS.includes(extension)) {
+            formatIssuesCollector.push(createIssuePageClient(
+              'error',
+              `Unsupported image format '${zipFileObject.name.split('/').pop()}' from JS manifest ('${jsFilePath}').`,
+              `Allowed formats: ${ALLOWED_IMAGE_EXTENSIONS.join(', ')}. Path: ${zipFileObject.name}`,
+              'unsupported-js-manifest-image-format'
+            ));
+          }
+        } else {
+           missingAssetsCollector.push({
+            type: 'jsManifestImg',
+            path: cleanedManifestAssetPath, // Report cleaned path
+            referencedFrom: jsFilePath,
+            originalSrc: originalSrcPath // Original path with query string for user info
+          });
         }
       } else {
         missingAssetsCollector.push({
@@ -359,14 +385,19 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
       if (href) {
         const cleanedHref = stripQueryString(href);
         if (!cleanedHref.startsWith('http:') && !cleanedHref.startsWith('https:') && !cleanedHref.startsWith('data:')) {
-            const cssFilePath = resolveAssetPathInZip(cleanedHref, foundHtmlPath, zip);
-            if (cssFilePath && zip.file(cssFilePath) && !processedCssPaths.has(cssFilePath)) {
-            referencedAssetPaths.add(cssFilePath);
-            processedCssPaths.add(cssFilePath);
-            const cssContent = await zip.file(cssFilePath)!.async('string');
-            await processCssContentAndCollectReferences(cssContent, cssFilePath, zip, missingAssets, referencedAssetPaths, cssLintIssues, formatIssues);
-            } else if (!cssFilePath || !zip.file(cssFilePath)) {
-            missingAssets.push({ type: 'htmlLinkCss', path: cleanedHref, referencedFrom: foundHtmlPath, originalSrc: href });
+            const cssFilePathResolved = resolveAssetPathInZip(cleanedHref, foundHtmlPath, zip);
+            if (cssFilePathResolved) {
+                const cssFileObject = zip.file(cssFilePathResolved);
+                if (cssFileObject && !processedCssPaths.has(cssFileObject.name)) {
+                    referencedAssetPaths.add(cssFileObject.name); // Use canonical name
+                    processedCssPaths.add(cssFileObject.name);
+                    const cssContent = await cssFileObject.async('string');
+                    await processCssContentAndCollectReferences(cssContent, cssFileObject.name, zip, missingAssets, referencedAssetPaths, cssLintIssues, formatIssues);
+                } else if (!cssFileObject) {
+                     missingAssets.push({ type: 'htmlLinkCss', path: cleanedHref, referencedFrom: foundHtmlPath, originalSrc: href });
+                }
+            } else {
+                 missingAssets.push({ type: 'htmlLinkCss', path: cleanedHref, referencedFrom: foundHtmlPath, originalSrc: href });
             }
         }
       }
@@ -375,18 +406,26 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
     const commonCssSuffixes = ['style.css', 'css/style.css', 'main.css', 'css/main.css'];
     for (const suffix of commonCssSuffixes) {
         const potentialCssPath = zipBaseDir + suffix; 
-        if (zip.file(potentialCssPath) && !processedCssPaths.has(potentialCssPath)) {
-            referencedAssetPaths.add(potentialCssPath);
-            processedCssPaths.add(potentialCssPath);
-            const cssContent = await zip.file(potentialCssPath)!.async('string');
-            await processCssContentAndCollectReferences(cssContent, potentialCssPath, zip, missingAssets, referencedAssetPaths, cssLintIssues, formatIssues);
-        } else {
+        const resolvedCommonCssPath = resolveAssetPathInZip(potentialCssPath, foundHtmlPath, zip);
+        if (resolvedCommonCssPath) {
+            const cssFileObject = zip.file(resolvedCommonCssPath);
+            if (cssFileObject && !processedCssPaths.has(cssFileObject.name)) {
+                referencedAssetPaths.add(cssFileObject.name); // Use canonical name
+                processedCssPaths.add(cssFileObject.name);
+                const cssContent = await cssFileObject.async('string');
+                await processCssContentAndCollectReferences(cssContent, cssFileObject.name, zip, missingAssets, referencedAssetPaths, cssLintIssues, formatIssues);
+            }
+        } else { // Check for absolute path if base dir search failed
             const potentialAbsoluteCssPath = suffix;
-             if (zipBaseDir !== '' && zip.file(potentialAbsoluteCssPath) && !processedCssPaths.has(potentialAbsoluteCssPath)) {
-                referencedAssetPaths.add(potentialAbsoluteCssPath);
-                processedCssPaths.add(potentialAbsoluteCssPath);
-                const cssContent = await zip.file(potentialAbsoluteCssPath)!.async('string');
-                await processCssContentAndCollectReferences(cssContent, potentialAbsoluteCssPath, zip, missingAssets, referencedAssetPaths, cssLintIssues, formatIssues);
+            const resolvedAbsoluteCssPath = resolveAssetPathInZip(potentialAbsoluteCssPath, foundHtmlPath, zip);
+            if (zipBaseDir !== '' && resolvedAbsoluteCssPath) {
+                const cssFileObject = zip.file(resolvedAbsoluteCssPath);
+                if (cssFileObject && !processedCssPaths.has(cssFileObject.name)) {
+                    referencedAssetPaths.add(cssFileObject.name); // Use canonical name
+                    processedCssPaths.add(cssFileObject.name);
+                    const cssContent = await cssFileObject.async('string');
+                    await processCssContentAndCollectReferences(cssContent, cssFileObject.name, zip, missingAssets, referencedAssetPaths, cssLintIssues, formatIssues);
+                }
             }
         }
     }
@@ -406,17 +445,27 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
         if (srcAttr) {
             const cleanedSrcAttr = stripQueryString(srcAttr);
             if (!cleanedSrcAttr.startsWith('data:') && !cleanedSrcAttr.startsWith('http:') && !cleanedSrcAttr.startsWith('https:') && !cleanedSrcAttr.startsWith('//')) {
-                const assetPath = resolveAssetPathInZip(cleanedSrcAttr, foundHtmlPath, zip);
-                if (assetPath && zip.file(assetPath)) {
-                    referencedAssetPaths.add(assetPath);
-                    const extension = assetPath.substring(assetPath.lastIndexOf('.')).toLowerCase();
-                    if (extension && !ALLOWED_IMAGE_EXTENSIONS.includes(extension)) {
-                        formatIssues.push(createIssuePageClient(
-                            'error', 
-                            `Unsupported image format used: '${assetPath.split('/').pop()}' in HTML.`,
-                            `Allowed formats are: ${ALLOWED_IMAGE_EXTENSIONS.join(', ')}. Path: ${assetPath}`,
-                            'unsupported-html-image-format'
-                        ));
+                const assetPathResolved = resolveAssetPathInZip(cleanedSrcAttr, foundHtmlPath, zip);
+                if (assetPathResolved) {
+                    const assetFileObject = zip.file(assetPathResolved);
+                    if (assetFileObject) {
+                        referencedAssetPaths.add(assetFileObject.name); // Use canonical name
+                        const extension = assetFileObject.name.substring(assetFileObject.name.lastIndexOf('.')).toLowerCase();
+                        if (extension && !ALLOWED_IMAGE_EXTENSIONS.includes(extension)) {
+                            formatIssues.push(createIssuePageClient(
+                                'error', 
+                                `Unsupported image format used: '${assetFileObject.name.split('/').pop()}' in HTML.`,
+                                `Allowed formats are: ${ALLOWED_IMAGE_EXTENSIONS.join(', ')}. Path: ${assetFileObject.name}`,
+                                'unsupported-html-image-format'
+                            ));
+                        }
+                    } else {
+                         missingAssets.push({
+                            type: el.tagName.toLowerCase() === 'img' ? 'htmlImg' : 'htmlSource',
+                            path: cleanedSrcAttr,
+                            referencedFrom: foundHtmlPath,
+                            originalSrc: srcAttr
+                        });
                     }
                 } else {
                     missingAssets.push({
@@ -440,21 +489,26 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
 
             if (!isExternalUrl && !isDataUri) { 
                 const resolvedScriptPath = resolveAssetPathInZip(cleanedSrcAttr, foundHtmlPath, zip);
-                if (resolvedScriptPath && zip.file(resolvedScriptPath)) {
-                    referencedAssetPaths.add(resolvedScriptPath);
-                    // Heuristic for Adobe Animate: if meta tag is present and this is a JS file, try to parse its manifest
-                    // Prefer JS file named similarly to HTML for Animate projects
-                    const htmlFileNameWithoutExt = foundHtmlPath.substring(foundHtmlPath.lastIndexOf('/') + 1).replace(/\.html?$/i, '');
-                    const scriptFileNameWithoutExt = resolvedScriptPath.substring(resolvedScriptPath.lastIndexOf('/') + 1).replace(/\.js$/i, '');
+                if (resolvedScriptPath) {
+                    const jsFileObject = zip.file(resolvedScriptPath);
+                    if (jsFileObject) {
+                        referencedAssetPaths.add(jsFileObject.name); // Use canonical name
+                        const htmlFileNameWithoutExt = foundHtmlPath.substring(foundHtmlPath.lastIndexOf('/') + 1).replace(/\.html?$/i, '');
+                        const scriptFileNameWithoutExt = jsFileObject.name.substring(jsFileObject.name.lastIndexOf('/') + 1).replace(/\.js$/i, '');
 
-                    if (isAdobeAnimateProject && resolvedScriptPath.toLowerCase().endsWith('.js')) {
-                       if (!mainAnimateJsPath || scriptFileNameWithoutExt === htmlFileNameWithoutExt) { // Prioritize matching name
-                            const jsFileObject = zip.file(resolvedScriptPath);
-                            if (jsFileObject) {
+                        if (isAdobeAnimateProject && jsFileObject.name.toLowerCase().endsWith('.js')) {
+                           if (!mainAnimateJsPath || scriptFileNameWithoutExt === htmlFileNameWithoutExt) {
                                 mainAnimateJsContent = await jsFileObject.async('string');
-                                mainAnimateJsPath = resolvedScriptPath;
+                                mainAnimateJsPath = jsFileObject.name; // Store canonical name
                             }
                         }
+                    } else {
+                         missingAssets.push({
+                            type: 'htmlScript',
+                            path: cleanedSrcAttr,
+                            referencedFrom: foundHtmlPath, 
+                            originalSrc: srcAttr
+                        });
                     }
                 } else { 
                      missingAssets.push({
@@ -507,13 +561,13 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
 
     const allJsFilePathsInZipScan = allZipFiles.filter(path => path.toLowerCase().endsWith('.js'));
     for (const jsFilePath of allJsFilePathsInZipScan) {
-      if (jsFilePath === mainAnimateJsPath) continue; // Already processed if it's the main Animate JS
+      if (jsFilePath === mainAnimateJsPath) continue; 
         const jsFileObject = zip.file(jsFilePath);
         if (jsFileObject) {
             const jsContent = await jsFileObject.async('string');
             checkDynamicImageLoader(
                 jsContent,
-                jsFilePath, 
+                jsFileObject.name, 
                 formatIssues,
                 'dynamic-image-loader-script-external'
             );
@@ -550,7 +604,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
 
             const extensionMatch = fileNameInFolder.match(/\.([^.]+)$/);
             if (extensionMatch && ALLOWED_IMAGE_EXTENSIONS.includes(`.${extensionMatch[1].toLowerCase()}`)) {
-                 actualFilesInImagesFolder.set(fileNameInFolder.toLowerCase(), zipFilePath);
+                 actualFilesInImagesFolder.set(fileNameInFolder.toLowerCase(), zipFilePath); // Store canonical zipFilePath
             }
         }
     });
@@ -566,16 +620,19 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
             ));
         } else if (imagesFolderExists) {
             expectedImagesFromHtml.forEach(({ id, referencedFromHtml }, normalizedExpectedFilename) => {
-                if (!actualFilesInImagesFolder.has(normalizedExpectedFilename)) {
+                const actualZipPath = actualFilesInImagesFolder.get(normalizedExpectedFilename);
+                if (!actualZipPath || !zip.file(actualZipPath) ) { // Check if it was found and still exists
                     formatIssues.push(createIssuePageClient(
                         'error',
                         `Image for ID '${id}' in HTML ('${referencedFromHtml}') not found in '${imagesFolderPath}'.`,
-                        `Expected file: '${normalizedExpectedFilename}' in folder '${imagesFolderPath}'. Please ensure the file exists and names match (case-insensitive).`,
+                        `Expected file: '${normalizedExpectedFilename}' in folder '${imagesFolderPath}'. Please ensure the file exists and names match (case-insensitive check for map lookup, but file system is key).`,
                         'html-id-image-missing-in-folder'
                     ));
                 } else {
-                    const actualZipPath = actualFilesInImagesFolder.get(normalizedExpectedFilename)!;
-                    referencedAssetPaths.add(actualZipPath); 
+                    const zipFileObject = zip.file(actualZipPath); // Should exist
+                    if (zipFileObject) {
+                       referencedAssetPaths.add(zipFileObject.name); // Use canonical name
+                    }
                 }
             });
         }
@@ -584,7 +641,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
     if (imagesFolderExists) {
         actualFilesInImagesFolder.forEach((zipFilePath, normalizedActualFilename) => {
             const expectedByHtmlId = expectedImagesFromHtml.has(normalizedActualFilename);
-            const alreadyReferenced = referencedAssetPaths.has(zipFilePath);
+            const alreadyReferenced = referencedAssetPaths.has(zipFilePath); // zipFilePath is canonical here
 
             if (!expectedByHtmlId && !alreadyReferenced) {
                  const suggestedIdBase = normalizedActualFilename.substring(0, normalizedActualFilename.lastIndexOf('.'));
@@ -603,10 +660,12 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
 
     const unreferencedFiles: string[] = [];
     allZipFiles.forEach(filePathInZip => {
-        if (!referencedAssetPaths.has(filePathInZip) && !allHtmlFilePathsInZip.includes(filePathInZip)) { 
-            unreferencedFiles.push(filePathInZip);
-        } else if (allHtmlFilePathsInZip.includes(filePathInZip) && filePathInZip !== foundHtmlPath && htmlFileCount > 1) {
-            // This case is handled by the multiple HTML files error
+        if (!referencedAssetPaths.has(filePathInZip) && filePathInZip !== foundHtmlPath) { 
+            if (htmlFileCount > 1 && allHtmlFilePathsInZip.includes(filePathInZip)) {
+                // This case is handled by the multiple HTML files error
+            } else {
+                 unreferencedFiles.push(filePathInZip);
+            }
         }
     });
 
@@ -651,7 +710,7 @@ const lintHtmlContent = (htmlString: string): ValidationIssue[] => {
   const ruleset: RuleSet = {
     'tag-pair': true,
     'attr-lowercase': true,
-    'attr-value-double-quotes': 'warning', // Changed from true to 'warning'
+    'attr-value-double-quotes': 'warning', 
     'doctype-first': false, 
     'spec-char-escape': true,
     'id-unique': true,
