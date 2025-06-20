@@ -76,12 +76,15 @@ const resolveAssetPathInZip = (assetPath: string, baseFilePath: string, zip: JSZ
     }
   }
   const resolvedPath = combinedSegments.join('/');
-  if (zip.file(resolvedPath)) {
-    return resolvedPath;
+  const zipFileObject = zip.file(resolvedPath);
+  if (zipFileObject) {
+    return zipFileObject.name; // Return canonical name
   }
   
-  if (!cleanedAssetPath.includes('/') && zip.file(cleanedAssetPath)) { 
-    return cleanedAssetPath;
+  // Fallback for assets directly in root if assetPath has no slashes and previous attempt failed
+  const zipFileObjectRoot = zip.file(cleanedAssetPath);
+  if (!cleanedAssetPath.includes('/') && zipFileObjectRoot) { 
+    return zipFileObjectRoot.name; // Return canonical name
   }
   return null;
 };
@@ -104,11 +107,11 @@ const findHtmlFileInZip = async (zip: JSZip): Promise<{ path: string, content: s
       }
   }
   
-  if (shortestDepthIndexHtml && zip.file(shortestDepthIndexHtml)) {
+  if (shortestDepthIndexHtml) {
       const htmlFileObject = zip.file(shortestDepthIndexHtml);
       if (htmlFileObject) {
         const content = await htmlFileObject.async("string");
-        return { path: htmlFileObject.name, content }; // Use canonical name
+        return { path: htmlFileObject.name, content }; 
       }
   }
 
@@ -127,11 +130,11 @@ const findHtmlFileInZip = async (zip: JSZip): Promise<{ path: string, content: s
     }
   }
 
-  if (shortestDepthAnyHtml && zip.file(shortestDepthAnyHtml)) {
+  if (shortestDepthAnyHtml) {
       const htmlFileObject = zip.file(shortestDepthAnyHtml);
       if (htmlFileObject) {
         const content = await htmlFileObject.async("string");
-        return { path: htmlFileObject.name, content }; // Use canonical name
+        return { path: htmlFileObject.name, content }; 
       }
   }
   
@@ -224,9 +227,9 @@ const processCssContentAndCollectReferences = async (
     const resolvedAssetPath = resolveAssetPathInZip(cleanedAssetUrl, cssFilePath, zip);
 
     if (resolvedAssetPath) {
-      const zipFileObject = zip.file(resolvedAssetPath);
+      const zipFileObject = zip.file(resolvedAssetPath); // Re-fetch to ensure it's a valid object
       if (zipFileObject) {
-        referencedAssetPathsCollector.add(zipFileObject.name); // Use canonical name
+        referencedAssetPathsCollector.add(zipFileObject.name); 
         const extension = zipFileObject.name.substring(zipFileObject.name.lastIndexOf('.')).toLowerCase();
         if (extension && !ALLOWED_IMAGE_EXTENSIONS.includes(extension)) {
           formatIssuesCollector.push(createIssuePageClient(
@@ -277,14 +280,14 @@ const checkDynamicImageLoader = (
 
 const parseAnimateManifest = (
   jsContent: string,
-  jsFilePath: string, // Path of the JS file containing the manifest
-  htmlFilePath: string, // Path of the main HTML file, for base path resolution
+  jsFilePath: string, 
+  htmlFilePath: string, 
   zip: JSZip,
   missingAssetsCollector: MissingAssetInfo[],
   referencedAssetPathsCollector: Set<string>,
   formatIssuesCollector: ValidationIssue[]
 ): void => {
-  const manifestRegex = /lib\.properties\.manifest\s*=\s*(\[[\s\S]*?\])\s*;/;
+  const manifestRegex = /manifest\s*:\s*(\[[\s\S]*?\])/; // Updated regex
   const manifestMatch = jsContent.match(manifestRegex);
 
   if (manifestMatch && manifestMatch[1]) {
@@ -292,8 +295,8 @@ const parseAnimateManifest = (
     const srcRegex = /\bsrc\s*:\s*"([^"]+)"/g;
     let srcMatch;
     while ((srcMatch = srcRegex.exec(manifestArrayString)) !== null) {
-      const originalSrcPath = srcMatch[1]; // e.g., "images/foo.png?cachebust"
-      const cleanedManifestAssetPath = stripQueryString(originalSrcPath); // e.g., "images/foo.png"
+      const originalSrcPath = srcMatch[1]; 
+      const cleanedManifestAssetPath = stripQueryString(originalSrcPath); 
 
       if (cleanedManifestAssetPath.startsWith('data:') || cleanedManifestAssetPath.startsWith('http:') || cleanedManifestAssetPath.startsWith('https:') || cleanedManifestAssetPath.startsWith('//')) {
         continue;
@@ -302,9 +305,9 @@ const parseAnimateManifest = (
       const resolvedAssetPath = resolveAssetPathInZip(cleanedManifestAssetPath, htmlFilePath, zip);
 
       if (resolvedAssetPath) {
-        const zipFileObject = zip.file(resolvedAssetPath);
+        const zipFileObject = zip.file(resolvedAssetPath); // Re-fetch
         if (zipFileObject) {
-          referencedAssetPathsCollector.add(zipFileObject.name); // Use canonical name
+          referencedAssetPathsCollector.add(zipFileObject.name); 
           const extension = zipFileObject.name.substring(zipFileObject.name.lastIndexOf('.')).toLowerCase();
           if (extension && !ALLOWED_IMAGE_EXTENSIONS.includes(extension)) {
             formatIssuesCollector.push(createIssuePageClient(
@@ -317,9 +320,9 @@ const parseAnimateManifest = (
         } else {
            missingAssetsCollector.push({
             type: 'jsManifestImg',
-            path: cleanedManifestAssetPath, // Report cleaned path
+            path: cleanedManifestAssetPath, 
             referencedFrom: jsFilePath,
-            originalSrc: originalSrcPath // Original path with query string for user info
+            originalSrc: originalSrcPath 
           });
         }
       } else {
@@ -389,7 +392,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
             if (cssFilePathResolved) {
                 const cssFileObject = zip.file(cssFilePathResolved);
                 if (cssFileObject && !processedCssPaths.has(cssFileObject.name)) {
-                    referencedAssetPaths.add(cssFileObject.name); // Use canonical name
+                    referencedAssetPaths.add(cssFileObject.name); 
                     processedCssPaths.add(cssFileObject.name);
                     const cssContent = await cssFileObject.async('string');
                     await processCssContentAndCollectReferences(cssContent, cssFileObject.name, zip, missingAssets, referencedAssetPaths, cssLintIssues, formatIssues);
@@ -410,18 +413,18 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
         if (resolvedCommonCssPath) {
             const cssFileObject = zip.file(resolvedCommonCssPath);
             if (cssFileObject && !processedCssPaths.has(cssFileObject.name)) {
-                referencedAssetPaths.add(cssFileObject.name); // Use canonical name
+                referencedAssetPaths.add(cssFileObject.name); 
                 processedCssPaths.add(cssFileObject.name);
                 const cssContent = await cssFileObject.async('string');
                 await processCssContentAndCollectReferences(cssContent, cssFileObject.name, zip, missingAssets, referencedAssetPaths, cssLintIssues, formatIssues);
             }
-        } else { // Check for absolute path if base dir search failed
+        } else { 
             const potentialAbsoluteCssPath = suffix;
             const resolvedAbsoluteCssPath = resolveAssetPathInZip(potentialAbsoluteCssPath, foundHtmlPath, zip);
             if (zipBaseDir !== '' && resolvedAbsoluteCssPath) {
                 const cssFileObject = zip.file(resolvedAbsoluteCssPath);
                 if (cssFileObject && !processedCssPaths.has(cssFileObject.name)) {
-                    referencedAssetPaths.add(cssFileObject.name); // Use canonical name
+                    referencedAssetPaths.add(cssFileObject.name); 
                     processedCssPaths.add(cssFileObject.name);
                     const cssContent = await cssFileObject.async('string');
                     await processCssContentAndCollectReferences(cssContent, cssFileObject.name, zip, missingAssets, referencedAssetPaths, cssLintIssues, formatIssues);
@@ -449,7 +452,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
                 if (assetPathResolved) {
                     const assetFileObject = zip.file(assetPathResolved);
                     if (assetFileObject) {
-                        referencedAssetPaths.add(assetFileObject.name); // Use canonical name
+                        referencedAssetPaths.add(assetFileObject.name); 
                         const extension = assetFileObject.name.substring(assetFileObject.name.lastIndexOf('.')).toLowerCase();
                         if (extension && !ALLOWED_IMAGE_EXTENSIONS.includes(extension)) {
                             formatIssues.push(createIssuePageClient(
@@ -492,14 +495,14 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
                 if (resolvedScriptPath) {
                     const jsFileObject = zip.file(resolvedScriptPath);
                     if (jsFileObject) {
-                        referencedAssetPaths.add(jsFileObject.name); // Use canonical name
+                        referencedAssetPaths.add(jsFileObject.name); 
                         const htmlFileNameWithoutExt = foundHtmlPath.substring(foundHtmlPath.lastIndexOf('/') + 1).replace(/\.html?$/i, '');
                         const scriptFileNameWithoutExt = jsFileObject.name.substring(jsFileObject.name.lastIndexOf('/') + 1).replace(/\.js$/i, '');
 
                         if (isAdobeAnimateProject && jsFileObject.name.toLowerCase().endsWith('.js')) {
                            if (!mainAnimateJsPath || scriptFileNameWithoutExt === htmlFileNameWithoutExt) {
                                 mainAnimateJsContent = await jsFileObject.async('string');
-                                mainAnimateJsPath = jsFileObject.name; // Store canonical name
+                                mainAnimateJsPath = jsFileObject.name; 
                             }
                         }
                     } else {
@@ -540,7 +543,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
         }
     }
 
-    if (isAdobeAnimateProject && mainAnimateJsContent && mainAnimateJsPath) {
+    if (isAdobeAnimateProject && mainAnimateJsContent && mainAnimateJsPath && foundHtmlPath) {
         parseAnimateManifest(mainAnimateJsContent, mainAnimateJsPath, foundHtmlPath, zip, missingAssets, referencedAssetPaths, formatIssues);
     }
     
@@ -584,7 +587,9 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
                 const baseName = id.substring(0, id.length - suffixMatch[1].length);
                 const extension = suffixMatch[1].substring(1).toLowerCase();
                 const expectedFileName = `${baseName}.${extension}`;
-                expectedImagesFromHtml.set(expectedFileName.toLowerCase(), { id, referencedFromHtml: foundHtmlPath! });
+                if (foundHtmlPath) {
+                    expectedImagesFromHtml.set(expectedFileName.toLowerCase(), { id, referencedFromHtml: foundHtmlPath });
+                }
             }
         }
     });
@@ -604,7 +609,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
 
             const extensionMatch = fileNameInFolder.match(/\.([^.]+)$/);
             if (extensionMatch && ALLOWED_IMAGE_EXTENSIONS.includes(`.${extensionMatch[1].toLowerCase()}`)) {
-                 actualFilesInImagesFolder.set(fileNameInFolder.toLowerCase(), zipFilePath); // Store canonical zipFilePath
+                 actualFilesInImagesFolder.set(fileNameInFolder.toLowerCase(), zipFilePath); 
             }
         }
     });
@@ -621,7 +626,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
         } else if (imagesFolderExists) {
             expectedImagesFromHtml.forEach(({ id, referencedFromHtml }, normalizedExpectedFilename) => {
                 const actualZipPath = actualFilesInImagesFolder.get(normalizedExpectedFilename);
-                if (!actualZipPath || !zip.file(actualZipPath) ) { // Check if it was found and still exists
+                if (!actualZipPath || !zip.file(actualZipPath) ) { 
                     formatIssues.push(createIssuePageClient(
                         'error',
                         `Image for ID '${id}' in HTML ('${referencedFromHtml}') not found in '${imagesFolderPath}'.`,
@@ -629,9 +634,9 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
                         'html-id-image-missing-in-folder'
                     ));
                 } else {
-                    const zipFileObject = zip.file(actualZipPath); // Should exist
+                    const zipFileObject = zip.file(actualZipPath); 
                     if (zipFileObject) {
-                       referencedAssetPaths.add(zipFileObject.name); // Use canonical name
+                       referencedAssetPaths.add(zipFileObject.name); 
                     }
                 }
             });
@@ -641,7 +646,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
     if (imagesFolderExists) {
         actualFilesInImagesFolder.forEach((zipFilePath, normalizedActualFilename) => {
             const expectedByHtmlId = expectedImagesFromHtml.has(normalizedActualFilename);
-            const alreadyReferenced = referencedAssetPaths.has(zipFilePath); // zipFilePath is canonical here
+            const alreadyReferenced = referencedAssetPaths.has(zipFilePath); 
 
             if (!expectedByHtmlId && !alreadyReferenced) {
                  const suggestedIdBase = normalizedActualFilename.substring(0, normalizedActualFilename.lastIndexOf('.'));
