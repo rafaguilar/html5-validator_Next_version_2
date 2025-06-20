@@ -40,6 +40,7 @@ interface CreativeAssetAnalysis {
   hasNonCdnExternalScripts: boolean;
   htmlFileCount: number;
   allHtmlFilePathsInZip: string[];
+  isAdobeAnimateProject: boolean;
 }
 
 
@@ -227,7 +228,7 @@ const processCssContentAndCollectReferences = async (
     const resolvedAssetPath = resolveAssetPathInZip(cleanedAssetUrl, cssFilePath, zip);
 
     if (resolvedAssetPath) {
-      const zipFileObject = zip.file(resolvedAssetPath); // Re-fetch to ensure it's a valid object
+      const zipFileObject = zip.file(resolvedAssetPath);
       if (zipFileObject) {
         referencedAssetPathsCollector.add(zipFileObject.name); 
         const extension = zipFileObject.name.substring(zipFileObject.name.lastIndexOf('.')).toLowerCase();
@@ -287,7 +288,7 @@ const parseAnimateManifest = (
   referencedAssetPathsCollector: Set<string>,
   formatIssuesCollector: ValidationIssue[]
 ): void => {
-  const manifestRegex = /manifest\s*:\s*(\[[\s\S]*?\])/; // Updated regex
+  const manifestRegex = /manifest\s*:\s*(\[[\s\S]*?\])/;
   const manifestMatch = jsContent.match(manifestRegex);
 
   if (manifestMatch && manifestMatch[1]) {
@@ -305,7 +306,7 @@ const parseAnimateManifest = (
       const resolvedAssetPath = resolveAssetPathInZip(cleanedManifestAssetPath, htmlFilePath, zip);
 
       if (resolvedAssetPath) {
-        const zipFileObject = zip.file(resolvedAssetPath); // Re-fetch
+        const zipFileObject = zip.file(resolvedAssetPath); 
         if (zipFileObject) {
           referencedAssetPathsCollector.add(zipFileObject.name); 
           const extension = zipFileObject.name.substring(zipFileObject.name.lastIndexOf('.')).toLowerCase();
@@ -364,7 +365,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
     const htmlFile = await findHtmlFileInZip(zip);
 
     if (!htmlFile) {
-      return { missingAssets, unreferencedFiles: allZipFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, formatIssues, hasNonCdnExternalScripts, htmlFileCount, allHtmlFilePathsInZip };
+      return { missingAssets, unreferencedFiles: allZipFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, formatIssues, hasNonCdnExternalScripts, htmlFileCount, allHtmlFilePathsInZip, isAdobeAnimateProject };
     }
 
     foundHtmlPath = htmlFile.path;
@@ -378,6 +379,12 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
     const animateMeta = doc.querySelector('meta[name="authoring-tool"][content="Adobe_Animate_CC"]');
     if (animateMeta) {
       isAdobeAnimateProject = true;
+      formatIssues.push(createIssuePageClient(
+        'info',
+        'Adobe Animate CC project detected.',
+        'This creative appears to be authored with Adobe Animate CC.',
+        'authoring-tool-animate-cc'
+      ));
     }
 
     const linkedStylesheets = Array.from(doc.querySelectorAll('link[rel="stylesheet"]'));
@@ -500,7 +507,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
                         const scriptFileNameWithoutExt = jsFileObject.name.substring(jsFileObject.name.lastIndexOf('/') + 1).replace(/\.js$/i, '');
 
                         if (isAdobeAnimateProject && jsFileObject.name.toLowerCase().endsWith('.js')) {
-                           if (!mainAnimateJsPath || scriptFileNameWithoutExt === htmlFileNameWithoutExt) {
+                           if (!mainAnimateJsPath || scriptFileNameWithoutExt === htmlFileNameWithoutExt || jsFileObject.name.includes(htmlFileNameWithoutExt)) { // Broader match for Animate JS
                                 mainAnimateJsContent = await jsFileObject.async('string');
                                 mainAnimateJsPath = jsFileObject.name; 
                             }
@@ -674,11 +681,11 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
         }
     });
 
-    return { missingAssets, unreferencedFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, formatIssues, hasNonCdnExternalScripts, htmlFileCount, allHtmlFilePathsInZip };
+    return { missingAssets, unreferencedFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, formatIssues, hasNonCdnExternalScripts, htmlFileCount, allHtmlFilePathsInZip, isAdobeAnimateProject };
 
   } catch (error: any) {
     cssLintIssues.push(createIssuePageClient('error', `Critical error analyzing ZIP file ${file.name}.`, error.message, 'zip-analysis-error'));
-    return { missingAssets, unreferencedFiles: [], foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, formatIssues, hasNonCdnExternalScripts, htmlFileCount, allHtmlFilePathsInZip };
+    return { missingAssets, unreferencedFiles: [], foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, formatIssues, hasNonCdnExternalScripts, htmlFileCount, allHtmlFilePathsInZip, isAdobeAnimateProject };
   }
 };
 
@@ -770,7 +777,9 @@ const buildValidationResult = async (
     let detailsForClickTagError: string | undefined = undefined;
     const enablerScriptRegex = /<script[^>]*src\s*=\s*['"][^'"]*enabler\.js[^'"]*['"][^>]*>/i;
 
-    if (analysis.htmlContent && enablerScriptRegex.test(analysis.htmlContent)) {
+    if (analysis.isAdobeAnimateProject) {
+        detailsForClickTagError = "For Adobe Animate projects, ensure clickTags are implemented correctly within the Animate environment, typically on a button symbol or via `this.buttonName.addEventListener('click', function() { window.open(clickTag); });` or similar in the Actions panel. The clickTag variable itself should be declared globally in an HTML script tag.";
+    } else if (analysis.htmlContent && enablerScriptRegex.test(analysis.htmlContent)) {
       detailsForClickTagError = "This creative might be designed for Google Ad Manager (formerly DoubleClick Studio/DCS) as 'Enabler.js' is present. This validator is not intended for creatives relying on Enabler.js for clickTag functionality, as they handle clickTags differently.";
     }
      issues.push(createIssuePageClient('error', 'No clickTags found or clickTag implementation is missing/invalid.', detailsForClickTagError));
@@ -927,15 +936,13 @@ const buildValidationResult = async (
 
   const hasErrors = issues.some(issue => issue.type === 'error');
   const hasWarnings = issues.some(issue => issue.type === 'warning');
-  const onlyInfoIssues = issues.length > 0 && issues.every(issue => issue.type === 'info');
-
 
   if (hasErrors) {
     status = 'error';
   } else if (hasWarnings) {
     status = 'warning';
-  } else if (onlyInfoIssues) { 
-    status = 'success'; 
+  } else { // No errors or warnings, can be success even with info issues
+    status = 'success';
   }
 
 
@@ -1060,4 +1067,3 @@ export default function HomePage() {
     </div>
   );
 }
-

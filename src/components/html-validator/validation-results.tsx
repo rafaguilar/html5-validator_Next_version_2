@@ -29,8 +29,8 @@ const StatusIcon = ({ status }: { status: ValidationResult['status'] }) => {
       return <XCircle className={commonClass} />;
     case 'warning':
       return <AlertTriangle className={commonClass} />;
-    default:
-      return <Info className={commonClass} />; // For pending/validating
+    default: // This will cover 'pending' and 'validating'
+      return <Loader2 className={`${commonClass} animate-spin`} />; 
   }
 };
 
@@ -40,6 +40,8 @@ const IssueIcon = ({ type }: { type: ValidationIssue['type'] }) => {
       return <XCircle className="w-4 h-4 text-destructive mr-2 flex-shrink-0" />;
     case 'warning':
       return <AlertTriangle className="w-4 h-4 text-accent mr-2 flex-shrink-0" />;
+    case 'info':
+      return <Info className="w-4 h-4 text-primary mr-2 flex-shrink-0" />; // Using primary for info
     default:
       return <Info className="w-4 h-4 text-muted-foreground mr-2 flex-shrink-0" />;
   }
@@ -257,13 +259,8 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
           }
 
           const sortedIssues = [...result.issues].sort((a, b) => {
-            if (a.type === 'error' && b.type === 'warning') {
-              return -1;
-            }
-            if (a.type === 'warning' && b.type === 'error') {
-              return 1;
-            }
-            return 0;
+            const order = { error: 0, warning: 1, info: 2 };
+            return order[a.type] - order[b.type];
           });
           
           let dimensionExplanation: React.ReactNode = null;
@@ -304,6 +301,9 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
               );
             }
           }
+
+          const nonInfoIssuesCount = result.issues.filter(issue => issue.type === 'error' || issue.type === 'warning').length;
+          const onlyInfoIssuesExist = result.issues.length > 0 && nonInfoIssuesCount === 0;
 
 
           return (
@@ -384,7 +384,7 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
                   </div>
                 )}
 
-                {result.hasCorrectTopLevelClickTag && (
+                {result.hasCorrectTopLevelClickTag && nonInfoIssuesCount === 0 && (
                   <div className="mt-2 text-sm text-green-600 flex items-center p-3 bg-green-500/10 rounded-md">
                     <CheckCircle2 className="w-5 h-5 mr-2 flex-shrink-0 text-green-500" />
                     Correct top-level clickTag (named 'clickTag' with HTTPS URL) detected in inline script.
@@ -415,18 +415,21 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
                     </ScrollArea>
                   </div>
                 )}
-                {result.issues.length === 0 && result.status !== 'pending' && result.status !== 'validating' && !result.hasCorrectTopLevelClickTag && (
-                  <div className="text-sm text-green-600 flex items-center p-3 bg-green-500/10 rounded-md">
-                    <CheckCircle2 className="w-5 h-5 mr-2 flex-shrink-0 text-green-500"/>
-                    No issues found. However, a standard top-level 'clickTag' with HTTPS was not detected in inline scripts.
-                  </div>
+                
+                {nonInfoIssuesCount === 0 && result.status !== 'pending' && result.status !== 'validating' && (
+                  result.hasCorrectTopLevelClickTag ? (
+                    <div className="text-sm text-green-600 flex items-center p-3 bg-green-500/10 rounded-md mt-2">
+                      <CheckCircle2 className="w-5 h-5 mr-2 flex-shrink-0 text-green-500"/>
+                      {onlyInfoIssuesExist ? "No errors or warnings. ClickTag OK. See informational messages." : "Creative meets requirements. ClickTag OK."}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-accent flex items-center p-3 bg-accent/10 rounded-md mt-2">
+                      <AlertTriangle className="w-5 h-5 mr-2 flex-shrink-0 text-accent"/>
+                      {onlyInfoIssuesExist ? "No errors or warnings. Standard clickTag not found in inline script. See informational messages." : "No errors or warnings. Standard clickTag not found in inline script."}
+                    </div>
+                  )
                 )}
-                 {result.issues.length === 0 && result.status === 'success' && result.hasCorrectTopLevelClickTag && (
-                  <div className="text-sm text-green-600 flex items-center p-3 bg-green-500/10 rounded-md">
-                    <CheckCircle2 className="w-5 h-5 mr-2 flex-shrink-0 text-green-500"/>
-                    Creative meets requirements.
-                  </div>
-                )}
+
               </CardContent>
               {result.status === 'pending' && (
                  <CardFooter className="p-4 bg-muted/30">

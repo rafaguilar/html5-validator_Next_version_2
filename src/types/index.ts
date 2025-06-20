@@ -1,7 +1,7 @@
 
 export interface ValidationIssue {
   id: string;
-  type: 'error' | 'warning';
+  type: 'error' | 'warning' | 'info';
   message: string;
   details?: string;
   rule?: string; // Added rule to align with createIssuePageClient
@@ -26,4 +26,3 @@ export interface ValidationResult {
   // htmlContent?: string; // This was for previews, not strictly needed for core validation of v1.1.0
   hasCorrectTopLevelClickTag?: boolean; // New field
 }
-
