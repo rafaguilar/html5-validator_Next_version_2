@@ -24,7 +24,7 @@ const POSSIBLE_FALLBACK_DIMENSIONS = [
 const ALLOWED_IMAGE_EXTENSIONS = ['.gif', '.jpg', '.jpeg', '.png', '.svg'];
 
 interface MissingAssetInfo {
-  type: 'cssRef' | 'htmlImg' | 'htmlSource' | 'htmlLinkCss' | 'htmlScript';
+  type: 'cssRef' | 'htmlImg' | 'htmlSource' | 'htmlLinkCss' | 'htmlScript' | 'jsManifestImg';
   path: string;
   referencedFrom: string;
   originalSrc: string;
@@ -51,13 +51,19 @@ const createIssuePageClient = (type: 'error' | 'warning' | 'info', message: stri
   rule: rule || (type === 'error' ? 'client-error' : (type === 'warning' ? 'client-warning' : 'client-info')),
 });
 
+const stripQueryString = (path: string): string => {
+  return path.split('?')[0];
+};
+
 const resolveAssetPathInZip = (assetPath: string, baseFilePath: string, zip: JSZip): string | null => {
-  if (assetPath.startsWith('data:') || assetPath.startsWith('http:') || assetPath.startsWith('https:') || assetPath.startsWith('//')) {
-    return assetPath; 
+  const cleanedAssetPath = stripQueryString(assetPath); // Clean path first
+
+  if (cleanedAssetPath.startsWith('data:') || cleanedAssetPath.startsWith('http:') || cleanedAssetPath.startsWith('https:') || cleanedAssetPath.startsWith('//')) {
+    return cleanedAssetPath; 
   }
 
   let basePathSegments = baseFilePath.includes('/') ? baseFilePath.split('/').slice(0, -1) : [];
-  const assetPathSegments = assetPath.split('/');
+  const assetPathSegments = cleanedAssetPath.split('/');
   let combinedSegments = [...basePathSegments];
 
   for (const segment of assetPathSegments) {
@@ -73,8 +79,9 @@ const resolveAssetPathInZip = (assetPath: string, baseFilePath: string, zip: JSZ
   if (zip.file(resolvedPath)) {
     return resolvedPath;
   }
-  if (!assetPath.includes('/') && zip.file(assetPath)) { // Fallback for assets at root if not found with relative path
-    return assetPath;
+  // Fallback for assets at root if not found with relative path, and original path didn't contain slashes (already cleaned)
+  if (!cleanedAssetPath.includes('/') && zip.file(cleanedAssetPath)) { 
+    return cleanedAssetPath;
   }
   return null;
 };
@@ -200,13 +207,15 @@ const processCssContentAndCollectReferences = async (
 
   while ((match = urlPattern.exec(cssContent)) !== null) {
     const originalUrl = match[0]; 
-    const assetUrlFromCss = match[2]; 
+    const assetUrlFromCss = match[2];
+    const cleanedAssetUrl = stripQueryString(assetUrlFromCss);
 
-    if (assetUrlFromCss.startsWith('data:') || assetUrlFromCss.startsWith('http:') || assetUrlFromCss.startsWith('https:') || assetUrlFromCss.startsWith('//')) {
+
+    if (cleanedAssetUrl.startsWith('data:') || cleanedAssetUrl.startsWith('http:') || cleanedAssetUrl.startsWith('https:') || cleanedAssetUrl.startsWith('//')) {
       continue; 
     }
 
-    const resolvedAssetPath = resolveAssetPathInZip(assetUrlFromCss, cssFilePath, zip);
+    const resolvedAssetPath = resolveAssetPathInZip(cleanedAssetUrl, cssFilePath, zip);
 
     if (resolvedAssetPath && zip.file(resolvedAssetPath)) {
       referencedAssetPathsCollector.add(resolvedAssetPath);
@@ -222,7 +231,7 @@ const processCssContentAndCollectReferences = async (
     } else {
       missingAssetsCollector.push({
         type: 'cssRef',
-        path: assetUrlFromCss, 
+        path: cleanedAssetUrl, 
         referencedFrom: cssFilePath,
         originalSrc: originalUrl 
       });
@@ -250,6 +259,55 @@ const checkDynamicImageLoader = (
     }
 };
 
+const parseAnimateManifest = (
+  jsContent: string,
+  jsFilePath: string,
+  htmlFilePath: string,
+  zip: JSZip,
+  missingAssetsCollector: MissingAssetInfo[],
+  referencedAssetPathsCollector: Set<string>,
+  formatIssuesCollector: ValidationIssue[]
+): void => {
+  const manifestRegex = /lib\.properties\.manifest\s*=\s*(\[[\s\S]*?\])\s*;/;
+  const manifestMatch = jsContent.match(manifestRegex);
+
+  if (manifestMatch && manifestMatch[1]) {
+    const manifestArrayString = manifestMatch[1];
+    const srcRegex = /\bsrc\s*:\s*"([^"]+)"/g;
+    let srcMatch;
+    while ((srcMatch = srcRegex.exec(manifestArrayString)) !== null) {
+      const originalSrcPath = srcMatch[1];
+      const cleanedManifestAssetPath = stripQueryString(originalSrcPath);
+
+      if (cleanedManifestAssetPath.startsWith('data:') || cleanedManifestAssetPath.startsWith('http:') || cleanedManifestAssetPath.startsWith('https:') || cleanedManifestAssetPath.startsWith('//')) {
+        continue;
+      }
+
+      const resolvedAssetPath = resolveAssetPathInZip(cleanedManifestAssetPath, htmlFilePath, zip); // Resolve relative to HTML
+
+      if (resolvedAssetPath && zip.file(resolvedAssetPath)) {
+        referencedAssetPathsCollector.add(resolvedAssetPath);
+        const extension = resolvedAssetPath.substring(resolvedAssetPath.lastIndexOf('.')).toLowerCase();
+        if (extension && !ALLOWED_IMAGE_EXTENSIONS.includes(extension)) {
+          formatIssuesCollector.push(createIssuePageClient(
+            'error',
+            `Unsupported image format '${resolvedAssetPath.split('/').pop()}' from JS manifest ('${jsFilePath}').`,
+            `Allowed formats: ${ALLOWED_IMAGE_EXTENSIONS.join(', ')}. Path: ${resolvedAssetPath}`,
+            'unsupported-js-manifest-image-format'
+          ));
+        }
+      } else {
+        missingAssetsCollector.push({
+          type: 'jsManifestImg',
+          path: cleanedManifestAssetPath,
+          referencedFrom: jsFilePath,
+          originalSrc: originalSrcPath
+        });
+      }
+    }
+  }
+};
+
 
 const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis> => {
   const missingAssets: MissingAssetInfo[] = [];
@@ -262,6 +320,9 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
   let hasNonCdnExternalScripts = false;
   let htmlFileCount = 0;
   let allHtmlFilePathsInZip: string[] = [];
+  let isAdobeAnimateProject = false;
+  let mainAnimateJsContent: string | undefined;
+  let mainAnimateJsPath: string | undefined;
 
 
   try {
@@ -285,20 +346,28 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
     htmlContentForAnalysis = htmlFile.content;
     const doc = new DOMParser().parseFromString(htmlContentForAnalysis, 'text/html');
 
+    const animateMeta = doc.querySelector('meta[name="authoring-tool"][content="Adobe_Animate_CC"]');
+    if (animateMeta) {
+      isAdobeAnimateProject = true;
+    }
+
     const linkedStylesheets = Array.from(doc.querySelectorAll('link[rel="stylesheet"]'));
     const processedCssPaths = new Set<string>(); 
 
     for (const linkTag of linkedStylesheets) {
       const href = linkTag.getAttribute('href');
-      if (href && !href.startsWith('http:') && !href.startsWith('https:') && !href.startsWith('data:')) {
-        const cssFilePath = resolveAssetPathInZip(href, foundHtmlPath, zip);
-        if (cssFilePath && zip.file(cssFilePath) && !processedCssPaths.has(cssFilePath)) {
-          referencedAssetPaths.add(cssFilePath);
-          processedCssPaths.add(cssFilePath);
-          const cssContent = await zip.file(cssFilePath)!.async('string');
-          await processCssContentAndCollectReferences(cssContent, cssFilePath, zip, missingAssets, referencedAssetPaths, cssLintIssues, formatIssues);
-        } else if (!cssFilePath || !zip.file(cssFilePath)) {
-          missingAssets.push({ type: 'htmlLinkCss', path: href, referencedFrom: foundHtmlPath, originalSrc: href });
+      if (href) {
+        const cleanedHref = stripQueryString(href);
+        if (!cleanedHref.startsWith('http:') && !cleanedHref.startsWith('https:') && !cleanedHref.startsWith('data:')) {
+            const cssFilePath = resolveAssetPathInZip(cleanedHref, foundHtmlPath, zip);
+            if (cssFilePath && zip.file(cssFilePath) && !processedCssPaths.has(cssFilePath)) {
+            referencedAssetPaths.add(cssFilePath);
+            processedCssPaths.add(cssFilePath);
+            const cssContent = await zip.file(cssFilePath)!.async('string');
+            await processCssContentAndCollectReferences(cssContent, cssFilePath, zip, missingAssets, referencedAssetPaths, cssLintIssues, formatIssues);
+            } else if (!cssFilePath || !zip.file(cssFilePath)) {
+            missingAssets.push({ type: 'htmlLinkCss', path: cleanedHref, referencedFrom: foundHtmlPath, originalSrc: href });
+            }
         }
       }
     }
@@ -334,26 +403,29 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
     const mediaElements = Array.from(doc.querySelectorAll('img[src], source[src]'));
     for (const el of mediaElements) {
         const srcAttr = el.getAttribute('src');
-        if (srcAttr && !srcAttr.startsWith('data:') && !srcAttr.startsWith('http:') && !srcAttr.startsWith('https:') && !srcAttr.startsWith('//')) {
-            const assetPath = resolveAssetPathInZip(srcAttr, foundHtmlPath, zip);
-            if (assetPath && zip.file(assetPath)) {
-                referencedAssetPaths.add(assetPath);
-                const extension = assetPath.substring(assetPath.lastIndexOf('.')).toLowerCase();
-                if (extension && !ALLOWED_IMAGE_EXTENSIONS.includes(extension)) {
-                    formatIssues.push(createIssuePageClient(
-                        'error', 
-                        `Unsupported image format used: '${assetPath.split('/').pop()}' in HTML.`,
-                        `Allowed formats are: ${ALLOWED_IMAGE_EXTENSIONS.join(', ')}. Path: ${assetPath}`,
-                        'unsupported-html-image-format'
-                    ));
+        if (srcAttr) {
+            const cleanedSrcAttr = stripQueryString(srcAttr);
+            if (!cleanedSrcAttr.startsWith('data:') && !cleanedSrcAttr.startsWith('http:') && !cleanedSrcAttr.startsWith('https:') && !cleanedSrcAttr.startsWith('//')) {
+                const assetPath = resolveAssetPathInZip(cleanedSrcAttr, foundHtmlPath, zip);
+                if (assetPath && zip.file(assetPath)) {
+                    referencedAssetPaths.add(assetPath);
+                    const extension = assetPath.substring(assetPath.lastIndexOf('.')).toLowerCase();
+                    if (extension && !ALLOWED_IMAGE_EXTENSIONS.includes(extension)) {
+                        formatIssues.push(createIssuePageClient(
+                            'error', 
+                            `Unsupported image format used: '${assetPath.split('/').pop()}' in HTML.`,
+                            `Allowed formats are: ${ALLOWED_IMAGE_EXTENSIONS.join(', ')}. Path: ${assetPath}`,
+                            'unsupported-html-image-format'
+                        ));
+                    }
+                } else {
+                    missingAssets.push({
+                        type: el.tagName.toLowerCase() === 'img' ? 'htmlImg' : 'htmlSource',
+                        path: cleanedSrcAttr,
+                        referencedFrom: foundHtmlPath,
+                        originalSrc: srcAttr
+                    });
                 }
-            } else {
-                missingAssets.push({
-                    type: el.tagName.toLowerCase() === 'img' ? 'htmlImg' : 'htmlSource',
-                    path: srcAttr,
-                    referencedFrom: foundHtmlPath,
-                    originalSrc: srcAttr
-                });
             }
         }
     }
@@ -362,17 +434,32 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
     for (const el of scriptElements) {
         const srcAttr = el.getAttribute('src');
         if (srcAttr) {
-            const isExternalUrl = srcAttr.startsWith('http:') || srcAttr.startsWith('https:') || srcAttr.startsWith('//');
-            const isDataUri = srcAttr.startsWith('data:');
+            const cleanedSrcAttr = stripQueryString(srcAttr);
+            const isExternalUrl = cleanedSrcAttr.startsWith('http:') || cleanedSrcAttr.startsWith('https:') || cleanedSrcAttr.startsWith('//');
+            const isDataUri = cleanedSrcAttr.startsWith('data:');
 
             if (!isExternalUrl && !isDataUri) { 
-                const assetPath = resolveAssetPathInZip(srcAttr, foundHtmlPath, zip);
-                if (assetPath && zip.file(assetPath)) {
-                    referencedAssetPaths.add(assetPath);
+                const resolvedScriptPath = resolveAssetPathInZip(cleanedSrcAttr, foundHtmlPath, zip);
+                if (resolvedScriptPath && zip.file(resolvedScriptPath)) {
+                    referencedAssetPaths.add(resolvedScriptPath);
+                    // Heuristic for Adobe Animate: if meta tag is present and this is a JS file, try to parse its manifest
+                    // Prefer JS file named similarly to HTML for Animate projects
+                    const htmlFileNameWithoutExt = foundHtmlPath.substring(foundHtmlPath.lastIndexOf('/') + 1).replace(/\.html?$/i, '');
+                    const scriptFileNameWithoutExt = resolvedScriptPath.substring(resolvedScriptPath.lastIndexOf('/') + 1).replace(/\.js$/i, '');
+
+                    if (isAdobeAnimateProject && resolvedScriptPath.toLowerCase().endsWith('.js')) {
+                       if (!mainAnimateJsPath || scriptFileNameWithoutExt === htmlFileNameWithoutExt) { // Prioritize matching name
+                            const jsFileObject = zip.file(resolvedScriptPath);
+                            if (jsFileObject) {
+                                mainAnimateJsContent = await jsFileObject.async('string');
+                                mainAnimateJsPath = resolvedScriptPath;
+                            }
+                        }
+                    }
                 } else { 
                      missingAssets.push({
                         type: 'htmlScript',
-                        path: srcAttr,
+                        path: cleanedSrcAttr,
                         referencedFrom: foundHtmlPath, 
                         originalSrc: srcAttr
                     });
@@ -391,12 +478,16 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
                     /^(https?:)?\/\/cdn\.jsdelivr\.net\//,
                     /^(https?:)?\/\/unpkg\.com\//,
                  ];
-                 const isCdnHosted = cdnPatterns.some(pattern => pattern.test(srcAttr));
+                 const isCdnHosted = cdnPatterns.some(pattern => pattern.test(cleanedSrcAttr));
                  if (!isCdnHosted) {
                    hasNonCdnExternalScripts = true;
                  }
             }
         }
+    }
+
+    if (isAdobeAnimateProject && mainAnimateJsContent && mainAnimateJsPath) {
+        parseAnimateManifest(mainAnimateJsContent, mainAnimateJsPath, foundHtmlPath, zip, missingAssets, referencedAssetPaths, formatIssues);
     }
     
     const inlineScriptTags = Array.from(doc.querySelectorAll('script:not([src])'));
@@ -416,6 +507,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
 
     const allJsFilePathsInZipScan = allZipFiles.filter(path => path.toLowerCase().endsWith('.js'));
     for (const jsFilePath of allJsFilePathsInZipScan) {
+      if (jsFilePath === mainAnimateJsPath) continue; // Already processed if it's the main Animate JS
         const jsFileObject = zip.file(jsFilePath);
         if (jsFileObject) {
             const jsContent = await jsFileObject.async('string');
@@ -642,17 +734,19 @@ const buildValidationResult = async (
   for (const missing of analysis.missingAssets) {
     let message = "";
     if (missing.type === 'cssRef') {
-      message = `Asset '${missing.originalSrc}' referenced in '${missing.referencedFrom}' not found in ZIP.`;
+      message = `Asset '${missing.originalSrc}' referenced in CSS ('${missing.referencedFrom}') not found in ZIP.`;
     } else if (missing.type === 'htmlImg') {
-      message = `Image '${missing.originalSrc}' referenced in HTML file '${missing.referencedFrom}' not found in ZIP.`;
+      message = `Image '${missing.originalSrc}' referenced in HTML ('${missing.referencedFrom}') not found in ZIP.`;
     } else if (missing.type === 'htmlSource') {
-      message = `Media source '${missing.originalSrc}' referenced in HTML file '${missing.referencedFrom}' not found in ZIP.`;
+      message = `Media source '${missing.originalSrc}' referenced in HTML ('${missing.referencedFrom}') not found in ZIP.`;
     } else if (missing.type === 'htmlLinkCss') {
-      message = `CSS file '${missing.originalSrc}' linked in HTML file '${missing.referencedFrom}' not found in ZIP.`;
+      message = `CSS file '${missing.originalSrc}' linked in HTML ('${missing.referencedFrom}') not found in ZIP.`;
     } else if (missing.type === 'htmlScript') {
-      message = `JavaScript file '${missing.originalSrc}' linked in HTML file '${missing.referencedFrom}' not found in ZIP.`;
+      message = `JavaScript file '${missing.originalSrc}' linked in HTML ('${missing.referencedFrom}') not found in ZIP.`;
+    } else if (missing.type === 'jsManifestImg') {
+      message = `Image '${missing.originalSrc}' from JS manifest ('${missing.referencedFrom}') not found in ZIP.`;
     }
-    issues.push(createIssuePageClient('warning', message, `Original path: ${missing.path}`));
+    issues.push(createIssuePageClient('warning', message, `Attempted path: ${missing.path}`));
   }
 
   for (const unreferencedFilePath of analysis.unreferencedFiles) {
