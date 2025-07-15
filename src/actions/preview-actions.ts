@@ -32,6 +32,7 @@ export async function processAndCacheFile(formData: FormData): Promise<Processed
     
     const filePaths: string[] = [];
     const textFileContents: { name: string; content: string }[] = [];
+    // Fonts are binary, so they don't go in this list. This list is for AI analysis.
     const textFileExtensions = ['.html', '.css', '.js', '.json', '.txt', '.svg', '.xml'];
 
     const fileEntries = Object.values(zip.files);
@@ -48,10 +49,15 @@ export async function processAndCacheFile(formData: FormData): Promise<Processed
       filesToCache.set(entry.name, fileBuffer);
       
       if (textFileExtensions.some(ext => entry.name.toLowerCase().endsWith(ext))) {
-          textFileContents.push({
-              name: entry.name,
-              content: fileBuffer.toString('utf-8')
-          });
+          try {
+            textFileContents.push({
+                name: entry.name,
+                content: fileBuffer.toString('utf-8')
+            });
+          } catch (e) {
+            // Ignore files that can't be converted to text, even with text extensions
+            console.warn(`Could not read file ${entry.name} as text, skipping for AI analysis.`);
+          }
       }
     }
 
