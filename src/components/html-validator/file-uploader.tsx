@@ -118,21 +118,21 @@ export function FileUploader({
                 {selectedFiles.map(file => (
                   <li
                     key={`${file.name}-${file.lastModified}`}
-                    className="flex items-center justify-between p-2 bg-card rounded-md shadow-sm"
+                    className="flex items-center p-2 bg-card rounded-md shadow-sm"
                   >
-                    <div className="flex items-center space-x-2 overflow-hidden">
-                      <Archive className="w-5 h-5 text-primary flex-shrink-0" />
-                      <span className="text-sm text-foreground truncate" title={file.name}>{file.name}</span>
-                    </div>
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                      className="h-6 w-6 mr-2 text-muted-foreground hover:text-destructive flex-shrink-0"
                       onClick={() => handleRemoveFile(file.name)}
                       aria-label={`Remove ${file.name}`}
                     >
                       <XCircle className="w-4 h-4" />
                     </Button>
+                    <div className="flex items-center space-x-2 overflow-hidden">
+                      <Archive className="w-5 h-5 text-primary flex-shrink-0" />
+                      <span className="text-sm text-foreground truncate" title={file.name}>{file.name}</span>
+                    </div>
                   </li>
                 ))}
               </ul>
