@@ -17,8 +17,10 @@ interface ProcessedResult {
 }
 
 export async function processAndCacheFile(formData: FormData): Promise<ProcessedResult | { error: string }> {
+  console.log('[Action] processAndCacheFile started.');
   const file = formData.get('file') as File;
   if (!file) {
+    console.error('[Action] No file found on FormData.');
     return { error: 'No file uploaded.' };
   }
 
@@ -55,17 +57,24 @@ export async function processAndCacheFile(formData: FormData): Promise<Processed
 
     const entryPoint = findHtmlFile(filePaths);
     if (!entryPoint) {
+      console.error('[Action] No HTML file found in ZIP for previewId:', previewId);
       return { error: 'No HTML file found in the ZIP archive.' };
     }
     
+    console.log(`[Action] Caching ${filesToCache.size} files for previewId: ${previewId}`);
     // Set cache before running AI check, so we don't wait on AI to serve files
     await fileCache.set(previewId, filesToCache);
     
+    console.log('[Action] Running AI security check...');
     const securityWarning = await detectMaliciousArchive(textFileContents);
+    console.log('[Action] AI security check complete. Warning:', securityWarning);
 
-    return { previewId, entryPoint, securityWarning };
+    const result = { previewId, entryPoint, securityWarning };
+    console.log('[Action] Successfully processed. Returning:', result);
+    return result;
+
   } catch (error) {
-    console.error('Error processing ZIP file:', error);
+    console.error('[Action] Critical error processing ZIP file:', error);
     // Cleanup attempt
     fileCache.cleanup(previewId);
     return { error: 'Failed to process ZIP file.' };

@@ -205,10 +205,13 @@ export function Validator() {
       try {
         const formData = new FormData();
         formData.append('file', file);
+        
+        console.log(`[Validator] Starting processing for ${file.name}`);
         const [analysis, previewOutcome] = await Promise.all([
           analyzeCreativeAssets(file),
           processAndCacheFile(formData)
         ]);
+        console.log(`[Validator] Received previewOutcome for ${file.name}:`, previewOutcome);
         
         const validationPart = await buildValidationResult(file, analysis);
         
@@ -221,18 +224,22 @@ export function Validator() {
                 securityWarning: previewOutcome.securityWarning
             };
         } else if (previewOutcome && 'error' in previewOutcome) {
+            console.error(`[Validator] Preview error for ${file.name}:`, previewOutcome.error);
             toast({ title: `Preview Error for ${file.name}`, description: previewOutcome.error, variant: "destructive" });
         }
 
-        return { 
+        const finalResult = { 
             id: `${file.name}-${Date.now()}`, 
             fileName: file.name, 
             fileSize: file.size, 
             ...validationPart,
             preview: previewResult
         };
+        console.log(`[Validator] Final validation object for ${file.name}:`, finalResult);
+        return finalResult;
+
       } catch (error) {
-        console.error(`Validation failed for ${file.name}:`, error);
+        console.error(`[Validator] Validation failed for ${file.name}:`, error);
         toast({ title: `Validation Error for ${file.name}`, description: "An unexpected error occurred during processing.", variant: "destructive" });
         return {
           id: `${file.name}-${Date.now()}`,
@@ -281,7 +288,7 @@ export function Validator() {
             setSelectedFiles={setSelectedFiles}
             onValidate={handleValidate}
             isLoading={isLoading}
-            validationResults={validationResults}
+            validationResults={validationResults || []}
           />
         </div>
         <div className="md:col-span-2">
