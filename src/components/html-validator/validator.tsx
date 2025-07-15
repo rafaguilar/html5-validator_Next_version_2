@@ -20,20 +20,6 @@ const createIssuePageClient = (type: 'error' | 'warning' | 'info', message: stri
   rule: rule || (type === 'error' ? 'client-error' : (type === 'warning' ? 'client-warning' : 'client-info')),
 });
 
-const stripQueryString = (path: string): string => path.split('?')[0];
-
-const resolveAssetPathInZip = (assetPath: string, baseFilePath: string, zip: JSZip): string | null => {
-  const cleanedAssetPath = stripQueryString(assetPath);
-  if (cleanedAssetPath.startsWith('data:') || cleanedAssetPath.startsWith('http:') || cleanedAssetPath.startsWith('https:') || cleanedAssetPath.startsWith('//')) {
-    return cleanedAssetPath;
-  }
-  let basePathSegments = baseFilePath.includes('/') ? baseFilePath.split('/').slice(0, -1) : [];
-  const resolvedPathRelative = [...basePathSegments, ...cleanedAssetPath.split('/')].join('/');
-  if (zip.file(resolvedPathRelative)) return resolvedPathRelative;
-  if (zip.file(cleanedAssetPath)) return cleanedAssetPath;
-  return null;
-};
-
 const findHtmlFileInZip = async (zip: JSZip): Promise<{ path: string, content: string } | null> => {
   const allFiles = Object.keys(zip.files);
   const htmlFiles = allFiles.filter(path => path.toLowerCase().endsWith('.html') && !path.startsWith("__MACOSX/") && !zip.files[path].dir);
@@ -51,17 +37,19 @@ const findHtmlFileInZip = async (zip: JSZip): Promise<{ path: string, content: s
 const lintHtmlContent = (htmlString: string, isCreatopyProject?: boolean): ValidationIssue[] => {
   if (!htmlString) return [];
   const issues: ValidationIssue[] = [];
-
   const lines = htmlString.split(/\r?\n/);
   const missingSpaceRegex = /<[^>]+?"class=/g;
 
   lines.forEach((line, index) => {
-    if (missingSpaceRegex.test(line)) {
+    let match;
+    // Reset regex state for each line
+    missingSpaceRegex.lastIndex = 0;
+    while ((match = missingSpaceRegex.exec(line)) !== null) {
       const tagMatch = line.match(/<[^>]*"class=[^>]*>/);
       const details = tagMatch
         ? `A space is required between attributes. Problem found in tag: \`${tagMatch[0]}\` on Line ${index + 1}.`
         : `A space is required before the 'class' attribute on Line ${index + 1}.`;
-      
+
       issues.push(createIssuePageClient(
         'error',
         'Missing space before class attribute.',
@@ -71,8 +59,8 @@ const lintHtmlContent = (htmlString: string, isCreatopyProject?: boolean): Valid
     }
   });
 
-  const ruleset: RuleSet = { 
-    'tag-pair': true, 
+  const ruleset: RuleSet = {
+    'tag-pair': true,
     'attr-value-double-quotes': true,
     'spec-char-escape': true,
   };
@@ -123,26 +111,23 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
   const assetIssues: ValidationIssue[] = [];
   let foundHtmlPath: string | undefined, htmlContentForAnalysis: string | undefined;
   let isAdobeAnimateProject = false, isCreatopyProject = false;
-  
+
   const allowedAssetExtensions = [
-    // Text
-    '.html', '.css', '.js', '.json', '.txt', '.svg', '.xml', 
-    // Images
-    '.gif', '.jpg', '.jpeg', '.png', 
-    // Fonts
-    '.eot', '.otf', '.ttf', '.woff', '.woff2' 
+    '.html', '.css', '.js', '.json', '.txt', '.xml', // Text-based
+    '.gif', '.jpg', '.jpeg', '.png', '.svg',          // Images
+    '.eot', '.otf', '.ttf', '.woff', '.woff2'         // Fonts
   ];
 
   const zip = await JSZip.loadAsync(file);
   const allZipFiles = Object.keys(zip.files).filter(path => !zip.files[path].dir && !path.startsWith("__MACOSX/") && !path.endsWith('.DS_Store'));
-  
+
   allZipFiles.forEach(path => {
-    const fileExt = path.substring(path.lastIndexOf('.')).toLowerCase();
+    const fileExt = (/\.[^.]+$/.exec(path) || [''])[0].toLowerCase();
     if (!allowedAssetExtensions.includes(fileExt)) {
-      console.log(`[Validator] Unsupported file found: ${path}`);
+      console.log(`[Validator] Asset Validation: Unsupported file type '${fileExt}' for file: ${path}`);
       assetIssues.push(createIssuePageClient('warning', 'Unsupported file type in ZIP.', `File: '${path}'. This file type is not standard and may not work in all ad platforms.`));
     } else {
-      console.log(`[Validator] Supported file found: ${path}`);
+      console.log(`[Validator] Asset Validation: Supported file type '${fileExt}' for file: ${path}`);
     }
   });
 
@@ -153,20 +138,20 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
   if (!htmlFileInfo) {
     return { formatIssues, assetIssues, htmlFileCount, allHtmlFilePathsInZip, isAdobeAnimateProject, isCreatopyProject };
   }
-  
+
   foundHtmlPath = htmlFileInfo.path;
   htmlContentForAnalysis = htmlFileInfo.content;
-  
+
   if (htmlContentForAnalysis.includes("window.creatopyEmbed")) {
     isCreatopyProject = true;
     formatIssues.push(createIssuePageClient('info', 'Creatopy project detected.', 'This creative appears to be authored with Creatopy. Specific checks for unquoted HTML attribute values have been adjusted.', 'authoring-tool-creatopy'));
   }
-  
+
   const doc = new DOMParser().parseFromString(htmlContentForAnalysis, 'text/html');
   if (doc.querySelector('meta[name="authoring-tool"][content="Adobe_Animate_CC"]')) {
     isAdobeAnimateProject = true;
   }
-  
+
   return { foundHtmlPath, htmlContent: htmlContentForAnalysis, formatIssues, assetIssues, htmlFileCount, allHtmlFilePathsInZip, isAdobeAnimateProject, isCreatopyProject };
 };
 
@@ -175,7 +160,7 @@ const buildValidationResult = async (file: File, analysis: CreativeAssetAnalysis
   let status: ValidationResult['status'] = 'success';
   if (file.size > MAX_FILE_SIZE) issues.push(createIssuePageClient('error', `File size exceeds limit (${(MAX_FILE_SIZE / 1024).toFixed(0)}KB).`));
   if (analysis.htmlFileCount > 1) issues.push(createIssuePageClient('warning', 'Multiple HTML files found in ZIP.', `Found: ${analysis.allHtmlFilePathsInZip.join(', ')}. The validator will analyze the most likely primary file: ${analysis.foundHtmlPath}`));
-  
+
   if (analysis.isAdobeAnimateProject && !analysis.isCreatopyProject) {
       issues.push(createIssuePageClient('info', 'Adobe Animate CC project detected.', `Specific checks for Animate structure applied.`, 'authoring-tool-animate-cc'));
   }
@@ -184,7 +169,7 @@ const buildValidationResult = async (file: File, analysis: CreativeAssetAnalysis
 
   const detectedClickTags = findClickTagsInHtml(analysis.htmlContent || null);
   if (detectedClickTags.length === 0 && analysis.htmlContent) issues.push(createIssuePageClient('warning', 'No standard clickTag variable found in the HTML file.', 'A clickTag is required for ad tracking. Example: var clickTag = "https://www.example.com";'));
-  
+
   if (analysis.htmlContent) issues.push(...lintHtmlContent(analysis.htmlContent, analysis.isCreatopyProject));
 
   let actualMetaWidth: number | undefined, actualMetaHeight: number | undefined;
@@ -235,7 +220,6 @@ export function Validator() {
             const formData = new FormData();
             formData.append('file', file);
 
-            // Run analysis and server action sequentially for each file
             const analysis = await analyzeCreativeAssets(file);
             console.log(`[Validator] Analysis complete for ${file.name}`);
 
@@ -243,7 +227,7 @@ export function Validator() {
             console.log(`[Validator] Preview outcome for ${file.name}:`, previewOutcome);
 
             const validationPart = await buildValidationResult(file, analysis);
-            
+
             let previewResult: PreviewResult | null = null;
             if (previewOutcome && !('error' in previewOutcome)) {
                 previewResult = {
@@ -257,10 +241,10 @@ export function Validator() {
                 toast({ title: `Preview Error for ${file.name}`, description: previewOutcome.error, variant: "destructive" });
             }
 
-            const finalResult = { 
-                id: `${file.name}-${file.lastModified}`, 
-                fileName: file.name, 
-                fileSize: file.size, 
+            const finalResult: ValidationResult = {
+                id: `${file.name}-${file.lastModified}`,
+                fileName: file.name,
+                fileSize: file.size,
                 ...validationPart,
                 preview: previewResult
             };
@@ -288,7 +272,7 @@ export function Validator() {
       toast({ title: "Analysis Complete", description: `Processed ${allResults.length} file(s). Check the report below.` });
     }
   };
-  
+
   useEffect(() => {
     if (selectedFiles.length === 0) {
         setValidationResults([]);
@@ -304,7 +288,7 @@ export function Validator() {
             setSelectedFiles={setSelectedFiles}
             onValidate={handleValidate}
             isLoading={isLoading}
-            validationResults={validationResults || []}
+            validationResults={validationResults}
           />
         </div>
         <div className="md:col-span-2">
