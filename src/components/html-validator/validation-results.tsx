@@ -198,7 +198,7 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
             headerBgClass = 'bg-accent'; headerTextClass = 'text-accent-foreground'; badgeTextClass = 'text-accent-foreground';
           }
 
-          const sortedIssues = [...result.issues].sort((a, b) => {
+          const sortedIssues = [...(result.issues || [])].sort((a, b) => {
             const order = { error: 0, warning: 1, info: 2 };
             return order[a.type] - order[b.type];
           });
