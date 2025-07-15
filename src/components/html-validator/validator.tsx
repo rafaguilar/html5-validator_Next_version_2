@@ -115,21 +115,37 @@ interface CreativeAssetAnalysis {
   allHtmlFilePathsInZip: string[];
   isAdobeAnimateProject: boolean;
   isCreatopyProject: boolean;
+  assetIssues: ValidationIssue[];
 }
 
 const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis> => {
   const formatIssues: ValidationIssue[] = [];
+  const assetIssues: ValidationIssue[] = [];
   let foundHtmlPath: string | undefined, htmlContentForAnalysis: string | undefined;
   let isAdobeAnimateProject = false, isCreatopyProject = false;
+  
+  const allowedAssetExtensions = [
+    '.html', '.css', '.js', '.json', '.txt', '.svg', '.xml', // Text
+    '.gif', '.jpg', '.jpeg', '.png', // Images
+    '.eot', '.otf', '.ttf', '.woff', '.woff2' // Fonts
+  ];
 
   const zip = await JSZip.loadAsync(file);
   const allZipFiles = Object.keys(zip.files).filter(path => !zip.files[path].dir && !path.startsWith("__MACOSX/") && !path.endsWith('.DS_Store'));
+  
+  allZipFiles.forEach(path => {
+    const fileExt = path.substring(path.lastIndexOf('.')).toLowerCase();
+    if (!allowedAssetExtensions.includes(fileExt)) {
+      assetIssues.push(createIssuePageClient('warning', 'Unsupported file type in ZIP.', `File: '${path}'. Allowed formats are: ${allowedAssetExtensions.join(', ')}.`));
+    }
+  });
+
   const allHtmlFilePathsInZip = allZipFiles.filter(path => path.toLowerCase().endsWith('.html'));
   const htmlFileCount = allHtmlFilePathsInZip.length;
   const htmlFileInfo = await findHtmlFileInZip(zip);
 
   if (!htmlFileInfo) {
-    return { formatIssues, htmlFileCount, allHtmlFilePathsInZip, isAdobeAnimateProject, isCreatopyProject };
+    return { formatIssues, assetIssues, htmlFileCount, allHtmlFilePathsInZip, isAdobeAnimateProject, isCreatopyProject };
   }
   
   foundHtmlPath = htmlFileInfo.path;
@@ -145,7 +161,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
     isAdobeAnimateProject = true;
   }
   
-  return { foundHtmlPath, htmlContent: htmlContentForAnalysis, formatIssues, htmlFileCount, allHtmlFilePathsInZip, isAdobeAnimateProject, isCreatopyProject };
+  return { foundHtmlPath, htmlContent: htmlContentForAnalysis, formatIssues, assetIssues, htmlFileCount, allHtmlFilePathsInZip, isAdobeAnimateProject, isCreatopyProject };
 };
 
 const buildValidationResult = async (file: File, analysis: CreativeAssetAnalysis): Promise<Omit<ValidationResult, 'id' | 'fileName' | 'fileSize' | 'preview'>> => {
@@ -158,6 +174,7 @@ const buildValidationResult = async (file: File, analysis: CreativeAssetAnalysis
       issues.push(createIssuePageClient('info', 'Adobe Animate CC project detected.', `Specific checks for Animate structure applied.`, 'authoring-tool-animate-cc'));
   }
   issues.push(...analysis.formatIssues);
+  issues.push(...analysis.assetIssues);
 
   const detectedClickTags = findClickTagsInHtml(analysis.htmlContent || null);
   if (detectedClickTags.length === 0 && analysis.htmlContent) issues.push(createIssuePageClient('warning', 'No standard clickTag variable found in the HTML file.', 'A clickTag is required for ad tracking. Example: var clickTag = "https://www.example.com";'));
@@ -196,20 +213,31 @@ export function Validator() {
     }
 
     setIsLoading(true);
-    setValidationResults([]);
+    setValidationResults(selectedFiles.map(file => ({
+      id: `${file.name}-${file.lastModified}`,
+      fileName: file.name,
+      status: 'pending',
+      issues: [],
+      preview: null
+    })));
 
     const allResults: ValidationResult[] = [];
 
     for (const file of selectedFiles) {
         try {
+            console.log(`[Validator] Processing file: ${file.name}`);
             const formData = new FormData();
             formData.append('file', file);
-            
+
+            // Using Promise.all to run analysis and server action in parallel
             const [analysis, previewOutcome] = await Promise.all([
                 analyzeCreativeAssets(file),
                 processAndCacheFile(formData)
             ]);
-            
+
+            console.log(`[Validator] Analysis complete for ${file.name}`);
+            console.log(`[Validator] Preview outcome for ${file.name}:`, previewOutcome);
+
             const validationPart = await buildValidationResult(file, analysis);
             
             let previewResult: PreviewResult | null = null;
@@ -221,21 +249,26 @@ export function Validator() {
                     securityWarning: previewOutcome.securityWarning
                 };
             } else if (previewOutcome && 'error' in previewOutcome) {
+                console.error(`[Validator] Preview error for ${file.name}:`, previewOutcome.error);
                 toast({ title: `Preview Error for ${file.name}`, description: previewOutcome.error, variant: "destructive" });
             }
 
-            allResults.push({ 
-                id: `${file.name}-${Date.now()}`, 
+            const finalResult = { 
+                id: `${file.name}-${file.lastModified}`, 
                 fileName: file.name, 
                 fileSize: file.size, 
                 ...validationPart,
                 preview: previewResult
-            });
+            };
+
+            console.log(`[Validator] Final result for ${file.name}:`, finalResult);
+            allResults.push(finalResult);
+
         } catch (error) {
-            console.error(`Validation failed for ${file.name}:`, error);
+            console.error(`[Validator] CRITICAL Validation failed for ${file.name}:`, error);
             toast({ title: `Validation Error for ${file.name}`, description: "An unexpected error occurred during processing.", variant: "destructive" });
             allResults.push({
-                id: `${file.name}-${Date.now()}`,
+                id: `${file.name}-${file.lastModified}`,
                 fileName: file.name,
                 fileSize: file.size,
                 status: 'error' as 'error',
