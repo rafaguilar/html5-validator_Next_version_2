@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { UploadCloud, Archive, XCircle, Loader2, FileCheck2 } from 'lucide-react';
-import type { ValidationResult, PreviewResult } from '@/types';
+import type { ValidationResult } from '@/types';
 
 interface FileUploaderProps {
   selectedFiles: File[];
