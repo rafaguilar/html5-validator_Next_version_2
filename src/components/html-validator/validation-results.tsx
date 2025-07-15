@@ -185,8 +185,9 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
       </div>
       <div ref={reportRef}>
         {results.map(result => {
-          console.log(`[Results] Rendering report for ${result.fileName}. Preview data:`, result.preview);
-
+          // Diagnostic Log
+          console.log(`[DIAG_RENDER] Rendering report for ${result.fileName}. Preview data:`, result.preview);
+          
           let headerBgClass = 'bg-muted/30';
           let headerTextClass = 'text-foreground';
           let badgeTextClass = 'text-foreground';
@@ -228,7 +229,7 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
                   <CardDescription className={`text-xs ${headerTextClass} opacity-80`}>Validation Status</CardDescription>
                 </div>
                 <div className="flex items-center gap-2">
-                    {result.preview && (
+                    {result.preview ? (
                         <Dialog>
                             <DialogTrigger asChild>
                                 <Button variant="secondary" size="sm" data-exclude-from-pdf="true" className="h-8">
@@ -244,6 +245,9 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
                                 </div>
                             </DialogContent>
                         </Dialog>
+                    ) : (
+                      // Diagnostic: Show why button is missing
+                      <div className="text-xs opacity-70" data-exclude-from-pdf="true">[No Preview]</div>
                     )}
                     <div className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-medium ${badgeTextClass}`}>
                       <StatusIcon status={result.status} /><span className="ml-2 capitalize">{result.status}</span>
