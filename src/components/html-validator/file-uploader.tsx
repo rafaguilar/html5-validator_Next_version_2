@@ -76,7 +76,7 @@ export function FileUploader({
     }
   };
 
-  const isAnalysisComplete = !isLoading && validationResults.length > 0;
+  const isAnalysisComplete = !isLoading && (validationResults || []).length > 0;
   const buttonText = selectedFiles.length > 1 ? 'Validate Files' : 'Validate & Preview';
 
   return (
