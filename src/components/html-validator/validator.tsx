@@ -139,7 +139,10 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
   allZipFiles.forEach(path => {
     const fileExt = path.substring(path.lastIndexOf('.')).toLowerCase();
     if (!allowedAssetExtensions.includes(fileExt)) {
-      assetIssues.push(createIssuePageClient('warning', 'Unsupported file type in ZIP.', `File: '${path}'. Allowed formats are: ${allowedAssetExtensions.join(', ')}.`));
+      console.log(`[Validator] Unsupported file found: ${path}`);
+      assetIssues.push(createIssuePageClient('warning', 'Unsupported file type in ZIP.', `File: '${path}'. This file type is not standard and may not work in all ad platforms.`));
+    } else {
+      console.log(`[Validator] Supported file found: ${path}`);
     }
   });
 
