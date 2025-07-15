@@ -23,11 +23,8 @@ export async function processAndCacheFile(formData: FormData): Promise<Processed
   }
 
   const previewId = uuidv4();
-  const tempDir = path.join(os.tmpdir(), 'html-validator-previews', previewId);
   
   try {
-    await fs.mkdir(tempDir, { recursive: true });
-
     const buffer = Buffer.from(await file.arrayBuffer());
     const zip = await JSZip.loadAsync(buffer);
     
@@ -36,18 +33,17 @@ export async function processAndCacheFile(formData: FormData): Promise<Processed
     const textFileExtensions = ['.html', '.css', '.js', '.json', '.txt', '.svg', '.xml'];
 
     const fileEntries = Object.values(zip.files);
+    const filesToCache = new Map<string, Buffer>();
 
     for (const entry of fileEntries) {
       if (entry.dir || entry.name.startsWith('__MACOSX/')) {
         continue;
       }
 
-      const filePath = path.join(tempDir, entry.name);
       filePaths.push(entry.name);
       
-      await fs.mkdir(path.dirname(filePath), { recursive: true });
       const fileBuffer = await entry.async('nodebuffer');
-      await fs.writeFile(filePath, fileBuffer);
+      filesToCache.set(entry.name, fileBuffer);
       
       if (textFileExtensions.some(ext => entry.name.toLowerCase().endsWith(ext))) {
           textFileContents.push({
@@ -61,19 +57,17 @@ export async function processAndCacheFile(formData: FormData): Promise<Processed
     if (!entryPoint) {
       return { error: 'No HTML file found in the ZIP archive.' };
     }
-
+    
+    // Set cache before running AI check, so we don't wait on AI to serve files
+    await fileCache.set(previewId, filesToCache);
+    
     const securityWarning = await detectMaliciousArchive(textFileContents);
-
-    fileCache.set(previewId, tempDir);
 
     return { previewId, entryPoint, securityWarning };
   } catch (error) {
     console.error('Error processing ZIP file:', error);
-    try {
-        await fs.rm(tempDir, { recursive: true, force: true });
-    } catch (cleanupError) {
-        console.error('Error cleaning up temp directory:', cleanupError);
-    }
+    // Cleanup attempt
+    fileCache.cleanup(previewId);
     return { error: 'Failed to process ZIP file.' };
   }
 }
