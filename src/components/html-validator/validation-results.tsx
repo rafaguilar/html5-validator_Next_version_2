@@ -185,7 +185,6 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
       </div>
       <div ref={reportRef}>
         {results.map(result => {
-          // CONSOLE LOG FOR DEBUGGING
           console.log(`[Results] Rendering report for ${result.fileName}. Preview data:`, result.preview);
 
           let headerBgClass = 'bg-muted/30';

@@ -125,9 +125,12 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
   let isAdobeAnimateProject = false, isCreatopyProject = false;
   
   const allowedAssetExtensions = [
-    '.html', '.css', '.js', '.json', '.txt', '.svg', '.xml', // Text
-    '.gif', '.jpg', '.jpeg', '.png', // Images
-    '.eot', '.otf', '.ttf', '.woff', '.woff2' // Fonts
+    // Text
+    '.html', '.css', '.js', '.json', '.txt', '.svg', '.xml', 
+    // Images
+    '.gif', '.jpg', '.jpeg', '.png', 
+    // Fonts
+    '.eot', '.otf', '.ttf', '.woff', '.woff2' 
   ];
 
   const zip = await JSZip.loadAsync(file);
@@ -229,13 +232,11 @@ export function Validator() {
             const formData = new FormData();
             formData.append('file', file);
 
-            // Using Promise.all to run analysis and server action in parallel
-            const [analysis, previewOutcome] = await Promise.all([
-                analyzeCreativeAssets(file),
-                processAndCacheFile(formData)
-            ]);
-
+            // Run analysis and server action sequentially for each file
+            const analysis = await analyzeCreativeAssets(file);
             console.log(`[Validator] Analysis complete for ${file.name}`);
+
+            const previewOutcome = await processAndCacheFile(formData);
             console.log(`[Validator] Preview outcome for ${file.name}:`, previewOutcome);
 
             const validationPart = await buildValidationResult(file, analysis);

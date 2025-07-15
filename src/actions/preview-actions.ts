@@ -33,7 +33,6 @@ export async function processAndCacheFile(formData: FormData): Promise<Processed
     
     const filePaths: string[] = [];
     const textFileContents: { name: string; content: string }[] = [];
-    // Fonts are binary, so they don't need to be in the text list for AI analysis.
     const textFileExtensions = ['.html', '.css', '.js', '.json', '.txt', '.svg', '.xml'];
 
     const fileEntries = Object.values(zip.files);
@@ -69,6 +68,7 @@ export async function processAndCacheFile(formData: FormData): Promise<Processed
     }
     console.log(`[Action] Found entry point: ${entryPoint}`);
     
+    // Explicitly await the file cache operation
     await fileCache.set(previewId, filesToCache);
     console.log(`[Action] Cached ${filesToCache.size} files for previewId ${previewId}`);
     
