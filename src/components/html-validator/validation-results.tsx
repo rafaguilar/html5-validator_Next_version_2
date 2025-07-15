@@ -140,7 +140,7 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
             const chunkDataUrl = tempChunkCanvas.toDataURL('image/png');
             pdf.addImage(chunkDataUrl, 'PNG', leftMargin, currentYOnPdf, imagePdfWidth, chunkPdfHeight);
             yPositionOnCanvas += safeChunkCanvasHeight;
-            currentYOnPdf += chunkPdfHeight + 5;
+            currentYOnPdf += 5;
           }
 
           pdf.save('validation-report.pdf');
@@ -207,8 +207,8 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
           if (result.adDimensions && !result.adDimensions.actual) {
             const errorDimensionRuleIds = ['meta-size-invalid-values', 'meta-size-malformed-content', 'meta-size-missing-no-filename', 'meta-size-no-html-no-filename', 'meta-size-fallback-guess', 'meta-size-defaulted'];
             const warningDimensionRuleIds = ['meta-size-missing-inferred-filename', 'meta-size-no-html-inferred-filename'];
-            const hasErrorIssue = result.issues.find(issue => issue.type === 'error' && issue.rule && errorDimensionRuleIds.includes(issue.rule));
-            const hasWarningIssue = result.issues.find(issue => issue.type === 'warning' && issue.rule && warningDimensionRuleIds.includes(issue.rule));
+            const hasErrorIssue = (result.issues || []).find(issue => issue.type === 'error' && issue.rule && errorDimensionRuleIds.includes(issue.rule));
+            const hasWarningIssue = (result.issues || []).find(issue => issue.type === 'warning' && issue.rule && warningDimensionRuleIds.includes(issue.rule));
             if (hasErrorIssue) {
               dimensionExplanation = (<p className="text-xs text-destructive flex items-center mt-1"><XCircle className="w-3 h-3 mr-1 flex-shrink-0" />Effective dimensions from fallback/filename due to meta tag error.</p>);
             } else if (hasWarningIssue) {
@@ -216,8 +216,8 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
             }
           }
 
-          const nonInfoIssuesCount = result.issues.filter(issue => issue.type === 'error' || issue.type === 'warning').length;
-          const onlyInfoIssuesExist = result.issues.length > 0 && nonInfoIssuesCount === 0;
+          const nonInfoIssuesCount = (result.issues || []).filter(issue => issue.type === 'error' || issue.type === 'warning').length;
+          const onlyInfoIssuesExist = (result.issues || []).length > 0 && nonInfoIssuesCount === 0;
 
           return (
             <Card key={result.id} className="shadow-lg overflow-hidden mb-6">
