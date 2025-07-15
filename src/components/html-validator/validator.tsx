@@ -50,13 +50,34 @@ const findHtmlFileInZip = async (zip: JSZip): Promise<{ path: string, content: s
 
 const lintHtmlContent = (htmlString: string, isCreatopyProject?: boolean): ValidationIssue[] => {
   if (!htmlString) return [];
+  const issues: ValidationIssue[] = [];
+
+  // 1. Custom check for missing space between attributes
+  const lines = htmlString.split(/\r?\n/);
+  const missingSpaceRegex = /"(\s*class|id|src|href|alt|style|onclick|onmouseover|onmouseout)=/i;
+
+  lines.forEach((line, index) => {
+    // Regex to find an attribute starting with a letter, immediately after a closing quote.
+    // e.g., id="some-id"class="another-class"
+    const missingSpaceRegex = /"([a-zA-Z]+=)/g;
+    if (missingSpaceRegex.test(line.trim())) {
+      issues.push(createIssuePageClient(
+        'error',
+        'Missing space between HTML attributes.',
+        `Syntax error found on Line ${index + 1}. A space is required between attributes. Problematic line: \n\`${line.trim()}\`\n\nSuggestion: Add a space before the attribute that follows the closing double quote.`,
+        'attr-missing-space'
+      ));
+    }
+  });
+
+  // 2. Standard HTMLHint checks
   const ruleset: RuleSet = { 
     'tag-pair': true, 
     'attr-value-double-quotes': true,
     'spec-char-escape': true,
   };
 
-  return HTMLHint.verify(htmlString, ruleset).map((msg: LintResult) => {
+  HTMLHint.verify(htmlString, ruleset).forEach((msg: LintResult) => {
     let issueType: 'error' | 'warning' | 'info' = msg.type === 'error' ? 'error' : 'warning';
     let detailsText = `Line: ${msg.line}, Col: ${msg.col}, Rule: ${msg.rule.id}`;
 
@@ -69,8 +90,10 @@ const lintHtmlContent = (htmlString: string, isCreatopyProject?: boolean): Valid
         detailsText += `. Using single quotes or no quotes is not recommended. Double quotes are the standard and prevent parsing errors.`;
       }
     }
-    return createIssuePageClient(issueType, msg.message, detailsText, msg.rule.id);
+    issues.push(createIssuePageClient(issueType, msg.message, detailsText, msg.rule.id));
   });
+
+  return issues;
 };
 
 const findClickTagsInHtml = (htmlContent: string | null): ClickTagInfo[] => {
