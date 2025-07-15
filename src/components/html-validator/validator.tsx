@@ -52,20 +52,23 @@ const lintHtmlContent = (htmlString: string, isCreatopyProject?: boolean): Valid
   if (!htmlString) return [];
   const issues: ValidationIssue[] = [];
 
-  // 1. Custom check for missing space between attributes
+  // 1. Custom check for missing space before "class" attribute
   const lines = htmlString.split(/\r?\n/);
-  const missingSpaceRegex = /"(\s*class|id|src|href|alt|style|onclick|onmouseover|onmouseout)=/i;
+  const missingSpaceRegex = /"class=/g;
 
   lines.forEach((line, index) => {
-    // Regex to find an attribute starting with a letter, immediately after a closing quote.
-    // e.g., id="some-id"class="another-class"
-    const missingSpaceRegex = /"([a-zA-Z]+=)/g;
-    if (missingSpaceRegex.test(line.trim())) {
+    if (missingSpaceRegex.test(line)) {
+      // Find the full tag to provide better context
+      const tagMatch = line.match(/<[^>]*"class=[^>]*>/);
+      const details = tagMatch
+        ? `A space is required between attributes. Problem found in tag: \`${tagMatch[0]}\` on Line ${index + 1}.`
+        : `A space is required before the 'class' attribute on Line ${index + 1}.`;
+      
       issues.push(createIssuePageClient(
         'error',
-        'Missing space between HTML attributes.',
-        `Syntax error found on Line ${index + 1}. A space is required between attributes. Problematic line: \n\`${line.trim()}\`\n\nSuggestion: Add a space before the attribute that follows the closing double quote.`,
-        'attr-missing-space'
+        'Missing space before class attribute.',
+        details,
+        'attr-missing-space-before-class'
       ));
     }
   });
