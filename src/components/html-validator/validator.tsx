@@ -13,31 +13,6 @@ import { BannerPreview } from './banner-preview';
 import { processAndCacheFile } from '@/actions/preview-actions';
 
 const MAX_FILE_SIZE = 200 * 1024; // 200KB
-const POSSIBLE_FALLBACK_DIMENSIONS = [
-  { width: 300, height: 250 }, { width: 728, height: 90 }, { width: 160, height: 600 },
-];
-const ALLOWED_IMAGE_EXTENSIONS = ['.gif', '.jpg', '.jpeg', '.png', '.svg'];
-
-interface MissingAssetInfo {
-  type: 'cssRef' | 'htmlImg' | 'htmlSource' | 'htmlLinkCss' | 'htmlScript' | 'jsManifestImg';
-  path: string;
-  referencedFrom: string;
-  originalSrc: string;
-}
-
-interface CreativeAssetAnalysis {
-  missingAssets: MissingAssetInfo[];
-  unreferencedFiles: string[];
-  foundHtmlPath?: string;
-  htmlContent?: string;
-  cssLintIssues: ValidationIssue[];
-  formatIssues: ValidationIssue[];
-  hasNonCdnExternalScripts: boolean;
-  htmlFileCount: number;
-  allHtmlFilePathsInZip: string[];
-  isAdobeAnimateProject: boolean;
-  isCreatopyProject: boolean;
-}
 
 const createIssuePageClient = (type: 'error' | 'warning' | 'info', message: string, details?: string, rule?: string): ValidationIssue => ({
   id: `issue-page-client-${Math.random().toString(36).substr(2, 9)}`,
@@ -75,130 +50,29 @@ const findHtmlFileInZip = async (zip: JSZip): Promise<{ path: string, content: s
   return null;
 };
 
-async function lintCssContentViaAPI(cssText: string, filePath: string): Promise<ValidationIssue[]> {
-  // Bypassed for now
-  return [];
-}
+const lintHtmlContent = (htmlString: string, isCreatopyProject?: boolean): ValidationIssue[] => {
+  if (!htmlString) return [];
+  const ruleset: RuleSet = { 
+    'tag-pair': true, 
+    'attr-value-double-quotes': 'warning',
+    'spec-char-escape': true,
+  };
 
-const processCssContentAndCollectReferences = async (
-  cssContent: string, cssFilePath: string, zip: JSZip,
-  missingAssetsCollector: MissingAssetInfo[], referencedAssetPathsCollector: Set<string>,
-  cssIssuesCollector: ValidationIssue[], formatIssuesCollector: ValidationIssue[]
-): Promise<void> => {
-  const urlPattern = /url\s*\(\s*(['"]?)(.*?)\1\s*\)/gi;
-  let match;
-  while ((match = urlPattern.exec(cssContent)) !== null) {
-    const assetUrlFromCss = match[2];
-    const cleanedAssetUrl = stripQueryString(assetUrlFromCss);
-    if (cleanedAssetUrl.startsWith('data:') || cleanedAssetUrl.startsWith('http:') || cleanedAssetUrl.startsWith('https:') || cleanedAssetUrl.startsWith('//')) continue;
-    
-    const resolvedAssetZipPath = resolveAssetPathInZip(cleanedAssetUrl, cssFilePath, zip);
-    const zipFileObject = resolvedAssetZipPath ? zip.file(resolvedAssetZipPath) : null;
+  return HTMLHint.verify(htmlString, ruleset).map((msg: LintResult) => {
+    let issueType: 'error' | 'warning' | 'info' = msg.type === 'error' ? 'error' : 'warning';
+    let detailsText = `Line: ${msg.line}, Col: ${msg.col}, Rule: ${msg.rule.id}`;
 
-    if (zipFileObject) {
-      referencedAssetPathsCollector.add(zipFileObject.name);
-    } else {
-      missingAssetsCollector.push({ type: 'cssRef', path: cleanedAssetUrl, referencedFrom: cssFilePath, originalSrc: match[0] });
-    }
-  }
-};
-
-const parseAnimateManifest = async (
-  jsContent: string, jsFilePath: string, htmlFilePath: string, zip: JSZip,
-  missingAssetsCollector: MissingAssetInfo[], referencedAssetPathsCollector: Set<string>
-): Promise<void> => {
-  const manifestRegex = /manifest\s*:\s*(\[[\s\S]*?\])/;
-  const manifestMatch = jsContent.match(manifestRegex);
-  if (manifestMatch && manifestMatch[1]) {
-    const srcRegex = /\bsrc\s*:\s*"([^"]+)"/g;
-    let srcMatch;
-    while ((srcMatch = srcRegex.exec(manifestMatch[1])) !== null) {
-      const originalSrcPath = srcMatch[1];
-      const cleanedManifestAssetPath = stripQueryString(originalSrcPath);
-      if (cleanedManifestAssetPath.startsWith('data:') || cleanedManifestAssetPath.startsWith('http:') || cleanedManifestAssetPath.startsWith('https:') || cleanedManifestAssetPath.startsWith('//')) continue;
-
-      const resolvedAssetZipPath = resolveAssetPathInZip(cleanedManifestAssetPath, htmlFilePath, zip);
-      const zipFileObject = resolvedAssetZipPath ? zip.file(resolvedAssetZipPath) : null;
-      if (zipFileObject) {
-        referencedAssetPathsCollector.add(zipFileObject.name);
+    if (msg.rule.id === 'attr-value-double-quotes') {
+      if (isCreatopyProject) {
+        issueType = 'info';
+        detailsText = `Line: ${msg.line}, Col: ${msg.col}. Creatopy often uses unquoted attributes. While HTML5 allows this for some attributes, double quotes are best practice for consistency and to avoid parsing issues.`;
       } else {
-        missingAssetsCollector.push({ type: 'jsManifestImg', path: cleanedManifestAssetPath, referencedFrom: jsFilePath, originalSrc: originalSrcPath });
+        issueType = 'warning';
+        detailsText += `. Using single quotes or no quotes is not recommended. Double quotes are the standard and prevent parsing errors.`;
       }
     }
-  }
-};
-
-const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis> => {
-  const missingAssets: MissingAssetInfo[] = [];
-  const referencedAssetPaths = new Set<string>();
-  const cssLintIssues: ValidationIssue[] = [];
-  const formatIssues: ValidationIssue[] = [];
-  let foundHtmlPath: string | undefined, htmlContentForAnalysis: string | undefined;
-  let hasNonCdnExternalScripts = false, isAdobeAnimateProject = false, isCreatopyProject = false;
-
-  const zip = await JSZip.loadAsync(file);
-  const allZipFiles = Object.keys(zip.files).filter(path => !zip.files[path].dir && !path.startsWith("__MACOSX/") && !path.endsWith('.DS_Store'));
-  const allHtmlFilePathsInZip = allZipFiles.filter(path => path.toLowerCase().endsWith('.html'));
-  const htmlFileCount = allHtmlFilePathsInZip.length;
-  const htmlFileInfo = await findHtmlFileInZip(zip);
-
-  if (!htmlFileInfo) {
-    return { missingAssets, unreferencedFiles: allZipFiles, cssLintIssues, formatIssues, hasNonCdnExternalScripts, htmlFileCount, allHtmlFilePathsInZip, isAdobeAnimateProject, isCreatopyProject };
-  }
-  
-  foundHtmlPath = htmlFileInfo.path;
-  referencedAssetPaths.add(foundHtmlPath);
-  htmlContentForAnalysis = htmlFileInfo.content;
-  const doc = new DOMParser().parseFromString(htmlContentForAnalysis, 'text/html');
-
-  if (htmlContentForAnalysis.includes("window.creatopyEmbed")) {
-    isCreatopyProject = true;
-    formatIssues.push(createIssuePageClient('info', 'Creatopy project detected.', 'This creative appears to be authored with Creatopy, which can have particularities like unquoted HTML attribute values.', 'authoring-tool-creatopy'));
-  }
-  if (doc.querySelector('meta[name="authoring-tool"][content="Adobe_Animate_CC"]')) {
-    isAdobeAnimateProject = true;
-  }
-  
-  // Simplified asset discovery logic
-  const elementsWithSrc = Array.from(doc.querySelectorAll<HTMLElement>('link[href], script[src], img[src], source[src]'));
-  let mainAnimateJsContent: string | undefined, mainAnimateJsPath: string | undefined;
-
-  for (const el of elementsWithSrc) {
-      const srcAttr = el.getAttribute('href') || el.getAttribute('src');
-      if (!srcAttr) continue;
-      
-      const cleanedSrc = stripQueryString(srcAttr);
-      if (cleanedSrc.startsWith('http:') || cleanedSrc.startsWith('https:') || cleanedSrc.startsWith('data:')) {
-          // Check for non-CDN external scripts
-          if (el.tagName === 'SCRIPT' && !/2mdn\.net|googlesyndication\.com|cloudflare\.com|googleapis\.com/.test(cleanedSrc)) {
-              hasNonCdnExternalScripts = true;
-          }
-          continue;
-      }
-
-      const resolvedAssetPath = resolveAssetPathInZip(cleanedSrc, foundHtmlPath, zip);
-      const assetFileObject = resolvedAssetPath ? zip.file(resolvedAssetPath) : null;
-      
-      if (assetFileObject) {
-          referencedAssetPaths.add(assetFileObject.name);
-          if (isAdobeAnimateProject && assetFileObject.name.toLowerCase().endsWith('.js')) {
-              mainAnimateJsContent = await assetFileObject.async('string');
-              mainAnimateJsPath = assetFileObject.name;
-          }
-      } else {
-          const typeMap = {'LINK': 'htmlLinkCss', 'SCRIPT': 'htmlScript', 'IMG': 'htmlImg', 'SOURCE': 'htmlSource'};
-          missingAssets.push({type: typeMap[el.tagName as keyof typeof typeMap] || 'htmlScript', path: cleanedSrc, referencedFrom: foundHtmlPath, originalSrc: srcAttr});
-      }
-  }
-
-  if (isAdobeAnimateProject && mainAnimateJsContent && mainAnimateJsPath) {
-    await parseAnimateManifest(mainAnimateJsContent, mainAnimateJsPath, foundHtmlPath, zip, missingAssets, referencedAssetPaths);
-  }
-
-  // Simplified unreferenced file check
-  const unreferencedFiles = allZipFiles.filter(filePath => !referencedAssetPaths.has(filePath));
-
-  return { missingAssets, unreferencedFiles, foundHtmlPath, htmlContent: htmlContentForAnalysis, cssLintIssues, formatIssues, hasNonCdnExternalScripts, htmlFileCount, allHtmlFilePathsInZip, isAdobeAnimateProject, isCreatopyProject };
+    return createIssuePageClient(issueType, msg.message, detailsText, msg.rule.id);
+  });
 };
 
 const findClickTagsInHtml = (htmlContent: string | null): ClickTagInfo[] => {
@@ -212,52 +86,71 @@ const findClickTagsInHtml = (htmlContent: string | null): ClickTagInfo[] => {
   return clickTags;
 };
 
-const lintHtmlContent = (htmlString: string, isCreatopyProject?: boolean): ValidationIssue[] => {
-  if (!htmlString) return [];
-  const ruleset: RuleSet = { 'tag-pair': true, 'attr-value-double-quotes': 'warning' };
-  return HTMLHint.verify(htmlString, ruleset).map((msg: LintResult) => {
-    let issueType: 'error' | 'warning' | 'info' = msg.type === 'error' ? 'error' : 'warning';
-    let detailsText = `Line: ${msg.line}, Col: ${msg.col}, Rule: ${msg.rule.id}`;
+interface CreativeAssetAnalysis {
+  foundHtmlPath?: string;
+  htmlContent?: string;
+  formatIssues: ValidationIssue[];
+  htmlFileCount: number;
+  allHtmlFilePathsInZip: string[];
+  isAdobeAnimateProject: boolean;
+  isCreatopyProject: boolean;
+}
 
-    if (msg.rule.id === 'attr-value-double-quotes') {
-      if (isCreatopyProject) {
-        issueType = 'info';
-        detailsText += `. Creatopy often uses unquoted attributes. While HTML5 allows this, double quotes are best practice.`;
-      } else {
-        issueType = 'warning';
-        detailsText += `. Using single quotes or no quotes is not recommended. Double quotes are best practice.`;
-      }
-    }
-    return createIssuePageClient(issueType, msg.message, detailsText, msg.rule.id);
-  });
+const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis> => {
+  const formatIssues: ValidationIssue[] = [];
+  let foundHtmlPath: string | undefined, htmlContentForAnalysis: string | undefined;
+  let isAdobeAnimateProject = false, isCreatopyProject = false;
+
+  const zip = await JSZip.loadAsync(file);
+  const allZipFiles = Object.keys(zip.files).filter(path => !zip.files[path].dir && !path.startsWith("__MACOSX/") && !path.endsWith('.DS_Store'));
+  const allHtmlFilePathsInZip = allZipFiles.filter(path => path.toLowerCase().endsWith('.html'));
+  const htmlFileCount = allHtmlFilePathsInZip.length;
+  const htmlFileInfo = await findHtmlFileInZip(zip);
+
+  if (!htmlFileInfo) {
+    return { formatIssues, htmlFileCount, allHtmlFilePathsInZip, isAdobeAnimateProject, isCreatopyProject };
+  }
+  
+  foundHtmlPath = htmlFileInfo.path;
+  htmlContentForAnalysis = htmlFileInfo.content;
+  
+  if (htmlContentForAnalysis.includes("window.creatopyEmbed")) {
+    isCreatopyProject = true;
+    formatIssues.push(createIssuePageClient('info', 'Creatopy project detected.', 'This creative appears to be authored with Creatopy. Specific checks for unquoted HTML attribute values have been adjusted.', 'authoring-tool-creatopy'));
+  }
+  
+  const doc = new DOMParser().parseFromString(htmlContentForAnalysis, 'text/html');
+  if (doc.querySelector('meta[name="authoring-tool"][content="Adobe_Animate_CC"]')) {
+    isAdobeAnimateProject = true;
+  }
+  
+  return { foundHtmlPath, htmlContent: htmlContentForAnalysis, formatIssues, htmlFileCount, allHtmlFilePathsInZip, isAdobeAnimateProject, isCreatopyProject };
 };
 
 const buildValidationResult = async (file: File, analysis: CreativeAssetAnalysis): Promise<Omit<ValidationResult, 'id' | 'fileName' | 'fileSize'>> => {
   const issues: ValidationIssue[] = [];
   let status: ValidationResult['status'] = 'success';
   if (file.size > MAX_FILE_SIZE) issues.push(createIssuePageClient('error', `File size exceeds limit (${(MAX_FILE_SIZE / 1024).toFixed(0)}KB).`));
-  if (analysis.htmlFileCount > 1) issues.push(createIssuePageClient('error', 'Multiple HTML files found in ZIP.', `Found: ${analysis.allHtmlFilePathsInZip.join(', ')}.`));
+  if (analysis.htmlFileCount > 1) issues.push(createIssuePageClient('warning', 'Multiple HTML files found in ZIP.', `Found: ${analysis.allHtmlFilePathsInZip.join(', ')}. The validator will analyze the most likely primary file: ${analysis.foundHtmlPath}`));
   
   if (analysis.isAdobeAnimateProject && !analysis.isCreatopyProject) {
       issues.push(createIssuePageClient('info', 'Adobe Animate CC project detected.', `Specific checks for Animate structure applied.`, 'authoring-tool-animate-cc'));
   }
+  issues.push(...analysis.formatIssues);
 
   const detectedClickTags = findClickTagsInHtml(analysis.htmlContent || null);
-  if (detectedClickTags.length === 0) issues.push(createIssuePageClient('error', 'No clickTags found.'));
+  if (detectedClickTags.length === 0 && analysis.htmlContent) issues.push(createIssuePageClient('error', 'No standard clickTag variable found in the HTML file.', 'A clickTag is required for ad tracking. Example: var clickTag = "https://www.example.com";'));
   
-  analysis.missingAssets.forEach(m => issues.push(createIssuePageClient('warning', `Asset '${m.originalSrc}' in '${m.referencedFrom}' not found.`)));
-  analysis.unreferencedFiles.forEach(u => issues.push(createIssuePageClient('warning', `Unreferenced file in ZIP: '${u}'.`)));
-  issues.push(...analysis.cssLintIssues, ...analysis.formatIssues);
   if (analysis.htmlContent) issues.push(...lintHtmlContent(analysis.htmlContent, analysis.isCreatopyProject));
 
   let actualMetaWidth: number | undefined, actualMetaHeight: number | undefined;
   if (analysis.htmlContent) {
-    const metaTagMatch = analysis.htmlContent.match(/<meta\s+name=(?:["']?ad\.size["']?)\s+content=(?:["']?width=(\d+)[,;]?\s*height=(\d+)["']?)[^>]*>/i);
+    const metaTagMatch = analysis.htmlContent.match(/<meta\s+name=["']?ad\.size["']?\s+content=["']?width=(\d+)[,;]?\s*height=(\d+)["']?/i);
     if (metaTagMatch) {
       actualMetaWidth = parseInt(metaTagMatch[1], 10);
       actualMetaHeight = parseInt(metaTagMatch[2], 10);
     } else {
-      issues.push(createIssuePageClient('error', 'Required ad.size meta tag not found in HTML.'));
+      issues.push(createIssuePageClient('error', 'Required ad.size meta tag not found.', 'The HTML file must contain a meta tag like: <meta name="ad.size" content="width=300,height=250">'));
     }
   }
 
@@ -277,17 +170,9 @@ export function Validator() {
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState('validator');
 
-  const handleFileSelectAndValidate = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (event.target.files && event.target.files.length > 0) {
-      const file = event.target.files[0];
-      setSelectedFiles([file]);
-      await handleValidate([file]);
-    }
-  };
-
-  const handleValidate = async (filesToProcess: File[]) => {
-    if (filesToProcess.length === 0) {
-      toast({ title: "No file selected", description: "Please select a ZIP file.", variant: "destructive" });
+  const handleValidate = async () => {
+    if (selectedFiles.length === 0) {
+      toast({ title: "No file selected", description: "Please select one or more ZIP files.", variant: "destructive" });
       return;
     }
 
@@ -295,48 +180,56 @@ export function Validator() {
     setValidationResults([]);
     setPreviewResult(null);
     setActiveTab('validator');
-
-    const file = filesToProcess[0];
-    const formData = new FormData();
-    formData.append('file', file);
     
-    // Fork validation and preview processing
-    const validationPromise = (async () => {
-        const analysis = await analyzeCreativeAssets(file);
-        const result = await buildValidationResult(file, analysis);
-        return { id: `${file.name}-${Date.now()}`, fileName: file.name, fileSize: file.size, ...result };
-    })();
+    const isSingleFile = selectedFiles.length === 1;
 
-    const previewPromise = processAndCacheFile(formData);
+    const validationPromises = selectedFiles.map(async (file) => {
+      const analysis = await analyzeCreativeAssets(file);
+      const result = await buildValidationResult(file, analysis);
+      return { id: `${file.name}-${Date.now()}`, fileName: file.name, fileSize: file.size, ...result };
+    });
 
-    const [validationOutcome, previewOutcome] = await Promise.allSettled([validationPromise, previewPromise]);
-
-    if (validationOutcome.status === 'fulfilled') {
-        setValidationResults([validationOutcome.value]);
-    } else {
-        console.error("Validation failed:", validationOutcome.reason);
-        toast({ title: "Validation Error", description: "An unexpected error occurred during validation.", variant: "destructive" });
+    // If it's a single file, also process it for preview
+    let previewPromise: Promise<any> = Promise.resolve(null);
+    if (isSingleFile) {
+        const file = selectedFiles[0];
+        const formData = new FormData();
+        formData.append('file', file);
+        previewPromise = processAndCacheFile(formData);
     }
 
-    if (previewOutcome.status === 'fulfilled') {
-        if ('error' in previewOutcome.value) {
-            toast({ title: "Preview Error", description: previewOutcome.value.error, variant: "destructive" });
+    const [validationOutcomes, previewOutcome] = await Promise.all([
+        Promise.allSettled(validationPromises),
+        previewPromise,
+    ]);
+
+    const successfulValidations = validationOutcomes
+        .filter(o => o.status === 'fulfilled')
+        .map(o => (o as PromiseFulfilledResult<ValidationResult>).value);
+    
+    setValidationResults(successfulValidations);
+
+    const failedValidations = validationOutcomes.filter(o => o.status === 'rejected');
+    if (failedValidations.length > 0) {
+        console.error("Some validations failed:", failedValidations);
+        toast({ title: "Validation Error", description: "An error occurred during validation for one or more files.", variant: "destructive" });
+    }
+
+    if (isSingleFile && previewOutcome) {
+        if ('error' in previewOutcome) {
+            toast({ title: "Preview Error", description: previewOutcome.error, variant: "destructive" });
             setPreviewResult(null);
         } else {
             setPreviewResult({
-                id: previewOutcome.value.previewId,
-                fileName: file.name,
-                entryPoint: previewOutcome.value.entryPoint,
-                securityWarning: previewOutcome.value.securityWarning
+                id: previewOutcome.previewId,
+                fileName: selectedFiles[0].name,
+                entryPoint: previewOutcome.entryPoint,
+                securityWarning: previewOutcome.securityWarning
             });
-            // Switch to preview tab if successful
-            if (!('error' in previewOutcome.value)) {
+            if (!('error' in previewOutcome)) {
                 setActiveTab('preview');
             }
         }
-    } else {
-        console.error("Preview processing failed:", previewOutcome.reason);
-        toast({ title: "Preview Error", description: "Could not process file for preview.", variant: "destructive" });
     }
 
     setIsLoading(false);
@@ -363,7 +256,7 @@ export function Validator() {
           <FileUploader
             selectedFiles={selectedFiles}
             setSelectedFiles={setSelectedFiles}
-            onValidate={() => handleValidate(selectedFiles)}
+            onValidate={handleValidate}
             isLoading={isLoading}
             validationResults={validationResults}
             previewResult={previewResult}

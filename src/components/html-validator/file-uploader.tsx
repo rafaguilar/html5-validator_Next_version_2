@@ -79,12 +79,13 @@ export function FileUploader({
   };
 
   const isAnalysisComplete = !isLoading && (validationResults.length > 0 || !!previewResult);
+  const buttonText = selectedFiles.length > 1 ? 'Validate Files' : 'Validate & Preview';
 
   return (
     <Card className="shadow-lg">
       <CardHeader>
-        <CardTitle className="text-xl">Upload Creative Asset</CardTitle>
-        <CardDescription>Upload a single ZIP file for validation and preview.</CardDescription>
+        <CardTitle className="text-xl">Upload Creative Assets</CardTitle>
+        <CardDescription>Upload one or more ZIP files. Preview is available for single file uploads.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
         <div
@@ -98,14 +99,14 @@ export function FileUploader({
         >
           <UploadCloud className={`w-16 h-16 mb-4 ${isDragging ? 'text-primary' : 'text-muted-foreground'}`} />
           <p className={`text-lg font-medium ${isDragging ? 'text-primary' : 'text-foreground'}`}>
-            Drag & Drop a ZIP file here
+            Drag & Drop ZIP files here
           </p>
           <p className="text-sm text-muted-foreground">or click to browse</p>
           <Input
             ref={fileInputRef}
             type="file"
             accept=".zip"
-            multiple={false} // Only allow single file upload for preview
+            multiple={true}
             className="hidden"
             onChange={handleFileChange}
           />
@@ -113,7 +114,7 @@ export function FileUploader({
 
         {selectedFiles.length > 0 && (
           <div className="space-y-3">
-            <h3 className="text-md font-medium text-foreground">Selected File:</h3>
+            <h3 className="text-md font-medium text-foreground">Selected Files ({selectedFiles.length}):</h3>
             <ScrollArea className="h-24 w-full rounded-md border p-3 bg-secondary/30">
               <ul className="space-y-2">
                 {selectedFiles.map(file => (
@@ -159,11 +160,11 @@ export function FileUploader({
                 Analysis Complete
               </>
             ) : (
-               'Validate & Preview'
+               buttonText
             )
           )}
         </Button>
-        {isAnalysisComplete && previewResult?.securityWarning && (
+        {isAnalysisComplete && selectedFiles.length === 1 && previewResult?.securityWarning && (
           <div className="flex items-center gap-2 p-3 text-sm text-destructive border border-destructive/50 bg-destructive/10 rounded-md">
             <ShieldAlert className="h-5 w-5 flex-shrink-0" />
             <div className="flex flex-col">
