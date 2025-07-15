@@ -10,8 +10,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { CheckCircle2, XCircle, AlertTriangle, FileText, Image as ImageIconLucide, Archive, LinkIcon, Download, Loader2, Info } from 'lucide-react';
+import { CheckCircle2, XCircle, AlertTriangle, FileText, Image as ImageIconLucide, Archive, LinkIcon, Download, Loader2, Info, MonitorPlay } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { BannerPreview } from './banner-preview';
+
 
 interface ValidationResultsProps {
   results: ValidationResult[];
@@ -62,7 +65,10 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
     const input = reportRef.current;
     if (input && results.length > 0) {
       setIsGeneratingPdf(true);
-      html2canvas(input, { scale: 2, useCORS: true, logging: false })
+      html2canvas(input, { scale: 2, useCORS: true, logging: false, onclone: (doc) => {
+          // Find all preview buttons and remove them from the clone
+          doc.querySelectorAll('[data-exclude-from-pdf="true"]').forEach(el => el.remove());
+      }})
         .then((canvas) => {
           const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
           const pdfPageWidth = pdf.internal.pageSize.getWidth();
@@ -220,8 +226,27 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
                   <CardTitle className={`text-lg font-semibold truncate ${headerTextClass}`} title={result.fileName}>{result.fileName}</CardTitle>
                   <CardDescription className={`text-xs ${headerTextClass} opacity-80`}>Validation Status</CardDescription>
                 </div>
-                <div className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-medium ${badgeTextClass}`}>
-                  <StatusIcon status={result.status} /><span className="ml-2 capitalize">{result.status}</span>
+                <div className="flex items-center gap-2">
+                    {result.preview && (
+                        <Dialog>
+                            <DialogTrigger asChild>
+                                <Button variant="secondary" size="sm" data-exclude-from-pdf="true" className="h-8">
+                                    <MonitorPlay className="w-4 h-4 mr-2" /> Preview
+                                </Button>
+                            </DialogTrigger>
+                            <DialogContent className="max-w-4xl h-[80vh] flex flex-col p-0">
+                                <DialogHeader className="p-4 border-b">
+                                    <DialogTitle>Live Preview: {result.fileName}</DialogTitle>
+                                </DialogHeader>
+                                <div className="flex-grow overflow-auto">
+                                   <BannerPreview result={result.preview} />
+                                </div>
+                            </DialogContent>
+                        </Dialog>
+                    )}
+                    <div className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-medium ${badgeTextClass}`}>
+                      <StatusIcon status={result.status} /><span className="ml-2 capitalize">{result.status}</span>
+                    </div>
                 </div>
               </CardHeader>
               <CardContent className="p-6 space-y-4">
@@ -303,7 +328,7 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
           )
         })}
       </div>
-      {results.length > 0 && !results.some(r => r.status === 'pending' || r.status === 'validating') && (
+      {results.length > 0 && !results.some(r => r.status === 'pending' || r.status !== 'validating') && (
         <div className="mt-8 pt-6 border-t border-border text-muted-foreground text-xs">
           <h5 className="font-semibold text-sm mb-2 text-foreground">ClickTag Identification Limitations:</h5>
           <p className="mb-1">Identification of clickTags from inline HTML scripts may fail for:</p>

@@ -4,7 +4,7 @@
 import React, { useRef, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { RefreshCw, ShieldAlert, MonitorPlay } from 'lucide-react';
+import { RefreshCw, ShieldAlert } from 'lucide-react';
 import type { PreviewResult } from '@/types';
 
 interface BannerPreviewProps {
@@ -16,19 +16,17 @@ export function BannerPreview({ result }: BannerPreviewProps) {
   const [iframeKey, setIframeKey] = useState(Date.now());
 
   const handleRefresh = () => {
-    // A simple way to force a reload is to change the key, which remounts the component
     setIframeKey(Date.now());
   };
   
   const previewUrl = `/api/preview/${result.id}/${result.entryPoint}`;
 
   return (
-    <Card className="shadow-lg">
-      <CardHeader>
+    <Card className="shadow-none border-0 h-full flex flex-col">
+      <CardHeader className="flex-shrink-0">
         <div className="flex justify-between items-start">
             <div>
                 <CardTitle className="text-xl flex items-center gap-2">
-                    <MonitorPlay className="w-6 h-6 text-primary" />
                     Live Preview
                 </CardTitle>
                 <CardDescription>
@@ -40,9 +38,9 @@ export function BannerPreview({ result }: BannerPreviewProps) {
             </Button>
         </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className="flex-grow flex flex-col gap-4">
         {result.securityWarning && (
-          <div className="mb-4 flex items-center gap-3 p-3 text-sm text-amber-800 dark:text-amber-200 border border-amber-500/50 bg-amber-500/10 rounded-md">
+          <div className="flex-shrink-0 flex items-center gap-3 p-3 text-sm text-amber-800 dark:text-amber-200 border border-amber-500/50 bg-amber-500/10 rounded-md">
             <ShieldAlert className="h-5 w-5 flex-shrink-0" />
             <div>
               <span className="font-semibold">AI Security Note:</span>
@@ -50,7 +48,7 @@ export function BannerPreview({ result }: BannerPreviewProps) {
             </div>
           </div>
         )}
-        <div className="relative w-full aspect-video bg-muted/30 rounded-lg overflow-hidden border">
+        <div className="relative w-full flex-grow bg-muted/30 rounded-lg overflow-hidden border">
            <iframe
               key={iframeKey}
               ref={iframeRef}

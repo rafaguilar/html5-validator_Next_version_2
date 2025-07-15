@@ -24,6 +24,7 @@ export interface ValidationResult {
   fileSize?: number;
   maxFileSize?: number;
   hasCorrectTopLevelClickTag?: boolean;
+  preview: PreviewResult | null;
 }
 
 export interface PreviewResult {

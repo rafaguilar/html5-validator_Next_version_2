@@ -1,15 +1,13 @@
 
 "use client";
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import JSZip from 'jszip';
 import { HTMLHint, type LintResult, type RuleSet } from 'htmlhint';
 import type { ValidationResult, ValidationIssue, ClickTagInfo, PreviewResult } from '@/types';
 import { useToast } from "@/hooks/use-toast";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { FileUploader } from './file-uploader';
 import { ValidationResults } from './validation-results';
-import { BannerPreview } from './banner-preview';
+import { FileUploader } from './file-uploader';
 import { processAndCacheFile } from '@/actions/preview-actions';
 
 const MAX_FILE_SIZE = 200 * 1024; // 200KB
@@ -54,7 +52,7 @@ const lintHtmlContent = (htmlString: string, isCreatopyProject?: boolean): Valid
   if (!htmlString) return [];
   const ruleset: RuleSet = { 
     'tag-pair': true, 
-    'attr-value-double-quotes': 'warning',
+    'attr-value-double-quotes': true,
     'spec-char-escape': true,
   };
 
@@ -159,16 +157,14 @@ const buildValidationResult = async (file: File, analysis: CreativeAssetAnalysis
   const hasWarnings = issues.some(i => i.type === 'warning');
   if (hasErrors) status = 'error'; else if (hasWarnings) status = 'warning';
 
-  return { status, issues, adDimensions, fileStructureOk: !!analysis.foundHtmlPath, detectedClickTags: detectedClickTags.length > 0 ? detectedClickTags : undefined, maxFileSize: MAX_FILE_SIZE, hasCorrectTopLevelClickTag: detectedClickTags.some(t => t.name === "clickTag" && t.isHttps) };
+  return { status, issues, adDimensions, fileStructureOk: !!analysis.foundHtmlPath, detectedClickTags: detectedClickTags.length > 0 ? detectedClickTags : undefined, maxFileSize: MAX_FILE_SIZE, hasCorrectTopLevelClickTag: detectedClickTags.some(t => t.name === "clickTag" && t.isHttps), preview: null };
 };
 
 export function Validator() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [validationResults, setValidationResults] = useState<ValidationResult[]>([]);
-  const [previewResult, setPreviewResult] = useState<PreviewResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const { toast } = useToast();
-  const [activeTab, setActiveTab] = useState('validator');
 
   const handleValidate = async () => {
     if (selectedFiles.length === 0) {
@@ -178,80 +174,81 @@ export function Validator() {
 
     setIsLoading(true);
     setValidationResults([]);
-    setPreviewResult(null);
-    setActiveTab('validator');
     
-    const isSingleFile = selectedFiles.length === 1;
-
-    const validationPromises = selectedFiles.map(async (file) => {
-      const analysis = await analyzeCreativeAssets(file);
-      const result = await buildValidationResult(file, analysis);
-      return { id: `${file.name}-${Date.now()}`, fileName: file.name, fileSize: file.size, ...result };
-    });
-
-    // If it's a single file, also process it for preview
-    let previewPromise: Promise<any> = Promise.resolve(null);
-    if (isSingleFile) {
-        const file = selectedFiles[0];
+    const resultsPromises = selectedFiles.map(async (file) => {
+      try {
         const formData = new FormData();
         formData.append('file', file);
-        previewPromise = processAndCacheFile(formData);
-    }
-
-    const [validationOutcomes, previewOutcome] = await Promise.all([
-        Promise.allSettled(validationPromises),
-        previewPromise,
-    ]);
-
-    const successfulValidations = validationOutcomes
-        .filter(o => o.status === 'fulfilled')
-        .map(o => (o as PromiseFulfilledResult<ValidationResult>).value);
-    
-    setValidationResults(successfulValidations);
-
-    const failedValidations = validationOutcomes.filter(o => o.status === 'rejected');
-    if (failedValidations.length > 0) {
-        console.error("Some validations failed:", failedValidations);
-        toast({ title: "Validation Error", description: "An error occurred during validation for one or more files.", variant: "destructive" });
-    }
-
-    if (isSingleFile && previewOutcome) {
-        if ('error' in previewOutcome) {
-            toast({ title: "Preview Error", description: previewOutcome.error, variant: "destructive" });
-            setPreviewResult(null);
-        } else {
-            setPreviewResult({
+        const [analysis, previewOutcome] = await Promise.all([
+          analyzeCreativeAssets(file),
+          processAndCacheFile(formData)
+        ]);
+        
+        const validationPart = await buildValidationResult(file, analysis);
+        
+        let previewResult: PreviewResult | null = null;
+        if (previewOutcome && !('error' in previewOutcome)) {
+            previewResult = {
                 id: previewOutcome.previewId,
-                fileName: selectedFiles[0].name,
+                fileName: file.name,
                 entryPoint: previewOutcome.entryPoint,
                 securityWarning: previewOutcome.securityWarning
-            });
-            if (!('error' in previewOutcome)) {
-                setActiveTab('preview');
-            }
+            };
+        } else if (previewOutcome && 'error' in previewOutcome) {
+            toast({ title: `Preview Error for ${file.name}`, description: previewOutcome.error, variant: "destructive" });
         }
-    }
 
+        return { 
+            id: `${file.name}-${Date.now()}`, 
+            fileName: file.name, 
+            fileSize: file.size, 
+            ...validationPart,
+            preview: previewResult
+        };
+      } catch (error) {
+        console.error(`Validation failed for ${file.name}:`, error);
+        toast({ title: `Validation Error for ${file.name}`, description: "An unexpected error occurred during processing.", variant: "destructive" });
+        return {
+          id: `${file.name}-${Date.now()}`,
+          fileName: file.name,
+          fileSize: file.size,
+          status: 'error' as 'error',
+          issues: [createIssuePageClient('error', 'File processing failed', 'An unexpected error occurred.')],
+          preview: null
+        }
+      }
+    });
+
+    const settledResults = await Promise.allSettled(resultsPromises);
+    
+    const finalResults = settledResults.map(res => {
+        if (res.status === 'fulfilled') {
+            return res.value;
+        } else {
+            console.error("A validation promise was rejected:", res.reason);
+            // We return a placeholder error object. The specific file name is lost here,
+            // so we rely on the toast message fired from the catch block above.
+            return null;
+        }
+    }).filter((r): r is ValidationResult => r !== null);
+
+
+    setValidationResults(finalResults);
     setIsLoading(false);
-    toast({ title: "Analysis Complete", description: "Check the tabs for results." });
+    if (finalResults.length > 0) {
+      toast({ title: "Analysis Complete", description: `Processed ${finalResults.length} file(s). Check the report below.` });
+    }
   };
   
   useEffect(() => {
     if (selectedFiles.length === 0) {
         setValidationResults([]);
-        setPreviewResult(null);
     }
   }, [selectedFiles]);
 
   return (
-    <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-      <div className="flex justify-between items-center">
-        <TabsList>
-          <TabsTrigger value="validator">Validator Report</TabsTrigger>
-          <TabsTrigger value="preview" disabled={!previewResult}>Live Preview</TabsTrigger>
-        </TabsList>
-      </div>
-      <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-8 items-start">
+    <div className="w-full">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-start">
         <div className="md:col-span-1">
           <FileUploader
             selectedFiles={selectedFiles}
@@ -259,18 +256,12 @@ export function Validator() {
             onValidate={handleValidate}
             isLoading={isLoading}
             validationResults={validationResults}
-            previewResult={previewResult}
           />
         </div>
         <div className="md:col-span-2">
-            <TabsContent value="validator">
-                <ValidationResults results={validationResults} isLoading={isLoading} />
-            </TabsContent>
-            <TabsContent value="preview">
-                {previewResult && <BannerPreview result={previewResult} />}
-            </TabsContent>
+            <ValidationResults results={validationResults} isLoading={isLoading} />
         </div>
       </div>
-    </Tabs>
+    </div>
   );
 }

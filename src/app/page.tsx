@@ -1,18 +1,16 @@
 
 "use client";
 
-import React, { useState } from 'react';
+import React from 'react';
 import { AppHeader } from '@/components/layout/header';
 import { Validator } from '@/components/html-validator/validator';
 
 export default function HomePage() {
-  const [activeTab, setActiveTab] = useState('validator');
-
   return (
     <div className="min-h-screen flex flex-col">
       <AppHeader />
       <main className="flex-grow container mx-auto px-4 py-8">
-        <div className="max-w-5xl mx-auto space-y-8">
+        <div className="max-w-7xl mx-auto space-y-8">
           <Validator />
         </div>
       </main>

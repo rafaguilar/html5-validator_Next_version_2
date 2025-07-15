@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { UploadCloud, Archive, XCircle, Loader2, FileCheck2, ShieldAlert } from 'lucide-react';
+import { UploadCloud, Archive, XCircle, Loader2, FileCheck2 } from 'lucide-react';
 import type { ValidationResult, PreviewResult } from '@/types';
 
 interface FileUploaderProps {
@@ -16,7 +16,6 @@ interface FileUploaderProps {
   onValidate: () => void;
   isLoading: boolean;
   validationResults: ValidationResult[];
-  previewResult: PreviewResult | null;
 }
 
 export function FileUploader({ 
@@ -25,7 +24,6 @@ export function FileUploader({
   onValidate, 
   isLoading,
   validationResults,
-  previewResult,
 }: FileUploaderProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -78,14 +76,14 @@ export function FileUploader({
     }
   };
 
-  const isAnalysisComplete = !isLoading && (validationResults.length > 0 || !!previewResult);
+  const isAnalysisComplete = !isLoading && validationResults.length > 0;
   const buttonText = selectedFiles.length > 1 ? 'Validate Files' : 'Validate & Preview';
 
   return (
     <Card className="shadow-lg">
       <CardHeader>
         <CardTitle className="text-xl">Upload Creative Assets</CardTitle>
-        <CardDescription>Upload one or more ZIP files. Preview is available for single file uploads.</CardDescription>
+        <CardDescription>Upload one or more ZIP files to validate and preview.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
         <div
@@ -164,15 +162,6 @@ export function FileUploader({
             )
           )}
         </Button>
-        {isAnalysisComplete && selectedFiles.length === 1 && previewResult?.securityWarning && (
-          <div className="flex items-center gap-2 p-3 text-sm text-destructive border border-destructive/50 bg-destructive/10 rounded-md">
-            <ShieldAlert className="h-5 w-5 flex-shrink-0" />
-            <div className="flex flex-col">
-              <span className="font-semibold">AI Security Warning</span>
-              <p>{previewResult.securityWarning}</p>
-            </div>
-          </div>
-        )}
       </CardContent>
     </Card>
   );
