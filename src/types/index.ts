@@ -4,7 +4,7 @@ export interface ValidationIssue {
   type: 'error' | 'warning' | 'info';
   message: string;
   details?: string;
-  rule?: string; // Added rule to align with createIssuePageClient
+  rule?: string;
 }
 
 export interface ClickTagInfo {
@@ -14,15 +14,21 @@ export interface ClickTagInfo {
 }
 
 export interface ValidationResult {
-  id: string; // Unique ID, e.g., fileName + timestamp
+  id: string;
   fileName: string;
-  status: 'pending' | 'validating' | 'success' | 'error' | 'warning'; // 'warning' if only warnings, 'error' if any error
+  status: 'pending' | 'validating' | 'success' | 'error' | 'warning';
   issues: ValidationIssue[];
   adDimensions?: { width: number; height: number; actual?: {width: number; height: number} };
   fileStructureOk?: boolean;
   detectedClickTags?: ClickTagInfo[];
-  fileSize?: number; // in bytes
-  maxFileSize?: number; // in bytes
-  // htmlContent?: string; // This was for previews, not strictly needed for core validation of v1.1.0
-  hasCorrectTopLevelClickTag?: boolean; // New field
+  fileSize?: number;
+  maxFileSize?: number;
+  hasCorrectTopLevelClickTag?: boolean;
+}
+
+export interface PreviewResult {
+  id: string; // The unique ID for the preview session
+  fileName: string;
+  entryPoint: string; // The path to the main HTML file
+  securityWarning: string | null;
 }

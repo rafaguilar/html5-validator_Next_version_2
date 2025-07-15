@@ -5,25 +5,34 @@ import type { ChangeEvent, DragEvent } from 'react';
 import React, { useState, useRef }from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { UploadCloud, Archive, XCircle, Loader2 } from 'lucide-react';
+import { UploadCloud, Archive, XCircle, Loader2, FileCheck2, ShieldAlert } from 'lucide-react';
+import type { ValidationResult, PreviewResult } from '@/types';
 
 interface FileUploaderProps {
   selectedFiles: File[];
   setSelectedFiles: React.Dispatch<React.SetStateAction<File[]>>;
   onValidate: () => void;
   isLoading: boolean;
+  validationResults: ValidationResult[];
+  previewResult: PreviewResult | null;
 }
 
-export function FileUploader({ selectedFiles, setSelectedFiles, onValidate, isLoading }: FileUploaderProps) {
+export function FileUploader({ 
+  selectedFiles, 
+  setSelectedFiles, 
+  onValidate, 
+  isLoading,
+  validationResults,
+  previewResult,
+}: FileUploaderProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
 
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     if (event.target.files) {
       const newFiles = Array.from(event.target.files).filter(file => file.type === 'application/zip' || file.type === 'application/x-zip-compressed');
-      // Prevent duplicates by name, simple check
       setSelectedFiles(prevFiles => {
         const existingFileNames = new Set(prevFiles.map(f => f.name));
         const uniqueNewFiles = newFiles.filter(nf => !existingFileNames.has(nf.name));
@@ -51,7 +60,7 @@ export function FileUploader({ selectedFiles, setSelectedFiles, onValidate, isLo
   const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!isDragging) setIsDragging(true); // Ensure it's set if entered quickly
+    if (!isDragging) setIsDragging(true);
   };
 
   const handleDrop = (e: DragEvent<HTMLDivElement>) => {
@@ -69,14 +78,17 @@ export function FileUploader({ selectedFiles, setSelectedFiles, onValidate, isLo
     }
   };
 
+  const isAnalysisComplete = !isLoading && (validationResults.length > 0 || !!previewResult);
+
   return (
     <Card className="shadow-lg">
       <CardHeader>
-        <CardTitle className="text-xl">Upload Creative Assets</CardTitle>
+        <CardTitle className="text-xl">Upload Creative Asset</CardTitle>
+        <CardDescription>Upload a single ZIP file for validation and preview.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
         <div
-          className={`flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-lg transition-colors
+          className={`flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-lg transition-colors cursor-pointer
             ${isDragging ? 'border-primary bg-primary/10' : 'border-input hover:border-primary/70'}`}
           onDragEnter={handleDragEnter}
           onDragLeave={handleDragLeave}
@@ -86,24 +98,23 @@ export function FileUploader({ selectedFiles, setSelectedFiles, onValidate, isLo
         >
           <UploadCloud className={`w-16 h-16 mb-4 ${isDragging ? 'text-primary' : 'text-muted-foreground'}`} />
           <p className={`text-lg font-medium ${isDragging ? 'text-primary' : 'text-foreground'}`}>
-            Drag & Drop ZIP files here
+            Drag & Drop a ZIP file here
           </p>
           <p className="text-sm text-muted-foreground">or click to browse</p>
           <Input
             ref={fileInputRef}
             type="file"
             accept=".zip"
-            multiple
+            multiple={false} // Only allow single file upload for preview
             className="hidden"
             onChange={handleFileChange}
           />
-          <p className="text-xs text-muted-foreground mt-2">Upload each banner as a separate .zip file. (Do not zip multiple banners together.)</p>
         </div>
 
         {selectedFiles.length > 0 && (
           <div className="space-y-3">
-            <h3 className="text-md font-medium text-foreground">Selected Files:</h3>
-            <ScrollArea className="h-40 w-full rounded-md border p-3 bg-secondary/30">
+            <h3 className="text-md font-medium text-foreground">Selected File:</h3>
+            <ScrollArea className="h-24 w-full rounded-md border p-3 bg-secondary/30">
               <ul className="space-y-2">
                 {selectedFiles.map(file => (
                   <li
@@ -139,12 +150,28 @@ export function FileUploader({ selectedFiles, setSelectedFiles, onValidate, isLo
           {isLoading ? (
             <>
               <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-              Validating...
+              Analyzing...
             </>
           ) : (
-            'Validate Files'
+             isAnalysisComplete ? (
+              <>
+                <FileCheck2 className="mr-2 h-5 w-5" />
+                Analysis Complete
+              </>
+            ) : (
+               'Validate & Preview'
+            )
           )}
         </Button>
+        {isAnalysisComplete && previewResult?.securityWarning && (
+          <div className="flex items-center gap-2 p-3 text-sm text-destructive border border-destructive/50 bg-destructive/10 rounded-md">
+            <ShieldAlert className="h-5 w-5 flex-shrink-0" />
+            <div className="flex flex-col">
+              <span className="font-semibold">AI Security Warning</span>
+              <p>{previewResult.securityWarning}</p>
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
