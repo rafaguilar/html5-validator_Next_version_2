@@ -137,7 +137,7 @@ const buildValidationResult = async (file: File, analysis: CreativeAssetAnalysis
   issues.push(...analysis.formatIssues);
 
   const detectedClickTags = findClickTagsInHtml(analysis.htmlContent || null);
-  if (detectedClickTags.length === 0 && analysis.htmlContent) issues.push(createIssuePageClient('error', 'No standard clickTag variable found in the HTML file.', 'A clickTag is required for ad tracking. Example: var clickTag = "https://www.example.com";'));
+  if (detectedClickTags.length === 0 && analysis.htmlContent) issues.push(createIssuePageClient('warning', 'No standard clickTag variable found in the HTML file.', 'A clickTag is required for ad tracking. Example: var clickTag = "https://www.example.com";'));
   
   if (analysis.htmlContent) issues.push(...lintHtmlContent(analysis.htmlContent, analysis.isCreatopyProject));
 
