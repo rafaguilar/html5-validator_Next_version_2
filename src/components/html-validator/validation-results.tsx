@@ -66,7 +66,6 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
     if (input && results.length > 0) {
       setIsGeneratingPdf(true);
       html2canvas(input, { scale: 2, useCORS: true, logging: false, onclone: (doc) => {
-          // Find all preview buttons and remove them from the clone
           doc.querySelectorAll('[data-exclude-from-pdf="true"]').forEach(el => el.remove());
       }})
         .then((canvas) => {
@@ -186,7 +185,6 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
       </div>
       <div ref={reportRef}>
         {results.map(result => {
-          console.log(`[Results] Rendering report for ${result.fileName}. Preview data:`, result.preview);
           let headerBgClass = 'bg-muted/30';
           let headerTextClass = 'text-foreground';
           let badgeTextClass = 'text-foreground';

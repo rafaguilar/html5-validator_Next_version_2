@@ -17,10 +17,8 @@ interface ProcessedResult {
 }
 
 export async function processAndCacheFile(formData: FormData): Promise<ProcessedResult | { error: string }> {
-  console.log('[Action] processAndCacheFile started.');
   const file = formData.get('file') as File;
   if (!file) {
-    console.error('[Action] No file found on FormData.');
     return { error: 'No file uploaded.' };
   }
 
@@ -32,7 +30,6 @@ export async function processAndCacheFile(formData: FormData): Promise<Processed
     
     const filePaths: string[] = [];
     const textFileContents: { name: string; content: string }[] = [];
-    // Fonts are binary, so they don't go in this list. This list is for AI analysis.
     const textFileExtensions = ['.html', '.css', '.js', '.json', '.txt', '.svg', '.xml'];
 
     const fileEntries = Object.values(zip.files);
@@ -48,14 +45,14 @@ export async function processAndCacheFile(formData: FormData): Promise<Processed
       const fileBuffer = await entry.async('nodebuffer');
       filesToCache.set(entry.name, fileBuffer);
       
-      if (textFileExtensions.some(ext => entry.name.toLowerCase().endsWith(ext))) {
+      const fileExt = path.extname(entry.name).toLowerCase();
+      if (textFileExtensions.includes(fileExt)) {
           try {
             textFileContents.push({
                 name: entry.name,
                 content: fileBuffer.toString('utf-8')
             });
           } catch (e) {
-            // Ignore files that can't be converted to text, even with text extensions
             console.warn(`Could not read file ${entry.name} as text, skipping for AI analysis.`);
           }
       }
@@ -63,25 +60,18 @@ export async function processAndCacheFile(formData: FormData): Promise<Processed
 
     const entryPoint = findHtmlFile(filePaths);
     if (!entryPoint) {
-      console.error('[Action] No HTML file found in ZIP for previewId:', previewId);
       return { error: 'No HTML file found in the ZIP archive.' };
     }
     
-    console.log(`[Action] Caching ${filesToCache.size} files for previewId: ${previewId}`);
-    // Set cache before running AI check, so we don't wait on AI to serve files
     await fileCache.set(previewId, filesToCache);
     
-    console.log('[Action] Running AI security check...');
     const securityWarning = await detectMaliciousArchive(textFileContents);
-    console.log('[Action] AI security check complete. Warning:', securityWarning);
 
     const result = { previewId, entryPoint, securityWarning };
-    console.log('[Action] Successfully processed. Returning:', result);
     return result;
 
   } catch (error) {
     console.error('[Action] Critical error processing ZIP file:', error);
-    // Cleanup attempt
     fileCache.cleanup(previewId);
     return { error: 'Failed to process ZIP file.' };
   }

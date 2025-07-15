@@ -52,13 +52,11 @@ const lintHtmlContent = (htmlString: string, isCreatopyProject?: boolean): Valid
   if (!htmlString) return [];
   const issues: ValidationIssue[] = [];
 
-  // 1. Custom check for missing space before "class" attribute
   const lines = htmlString.split(/\r?\n/);
-  const missingSpaceRegex = /"class=/g;
+  const missingSpaceRegex = /<[^>]+?"class=/g;
 
   lines.forEach((line, index) => {
     if (missingSpaceRegex.test(line)) {
-      // Find the full tag to provide better context
       const tagMatch = line.match(/<[^>]*"class=[^>]*>/);
       const details = tagMatch
         ? `A space is required between attributes. Problem found in tag: \`${tagMatch[0]}\` on Line ${index + 1}.`
@@ -73,7 +71,6 @@ const lintHtmlContent = (htmlString: string, isCreatopyProject?: boolean): Valid
     }
   });
 
-  // 2. Standard HTMLHint checks
   const ruleset: RuleSet = { 
     'tag-pair': true, 
     'attr-value-double-quotes': true,
@@ -151,7 +148,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
   return { foundHtmlPath, htmlContent: htmlContentForAnalysis, formatIssues, htmlFileCount, allHtmlFilePathsInZip, isAdobeAnimateProject, isCreatopyProject };
 };
 
-const buildValidationResult = async (file: File, analysis: CreativeAssetAnalysis): Promise<Omit<ValidationResult, 'id' | 'fileName' | 'fileSize'>> => {
+const buildValidationResult = async (file: File, analysis: CreativeAssetAnalysis): Promise<Omit<ValidationResult, 'id' | 'fileName' | 'fileSize' | 'preview'>> => {
   const issues: ValidationIssue[] = [];
   let status: ValidationResult['status'] = 'success';
   if (file.size > MAX_FILE_SIZE) issues.push(createIssuePageClient('error', `File size exceeds limit (${(MAX_FILE_SIZE / 1024).toFixed(0)}KB).`));
@@ -183,7 +180,7 @@ const buildValidationResult = async (file: File, analysis: CreativeAssetAnalysis
   const hasWarnings = issues.some(i => i.type === 'warning');
   if (hasErrors) status = 'error'; else if (hasWarnings) status = 'warning';
 
-  return { status, issues, adDimensions, fileStructureOk: !!analysis.foundHtmlPath, detectedClickTags: detectedClickTags.length > 0 ? detectedClickTags : undefined, maxFileSize: MAX_FILE_SIZE, hasCorrectTopLevelClickTag: detectedClickTags.some(t => t.name === "clickTag" && t.isHttps), preview: null };
+  return { status, issues, adDimensions, fileStructureOk: !!analysis.foundHtmlPath, detectedClickTags: detectedClickTags.length > 0 ? detectedClickTags : undefined, maxFileSize: MAX_FILE_SIZE, hasCorrectTopLevelClickTag: detectedClickTags.some(t => t.name === "clickTag" && t.isHttps) };
 };
 
 export function Validator() {
@@ -200,76 +197,58 @@ export function Validator() {
 
     setIsLoading(true);
     setValidationResults([]);
-    
-    const resultsPromises = selectedFiles.map(async (file) => {
-      try {
-        const formData = new FormData();
-        formData.append('file', file);
-        
-        console.log(`[Validator] Starting processing for ${file.name}`);
-        const [analysis, previewOutcome] = await Promise.all([
-          analyzeCreativeAssets(file),
-          processAndCacheFile(formData)
-        ]);
-        console.log(`[Validator] Received previewOutcome for ${file.name}:`, previewOutcome);
-        
-        const validationPart = await buildValidationResult(file, analysis);
-        
-        let previewResult: PreviewResult | null = null;
-        if (previewOutcome && !('error' in previewOutcome)) {
-            previewResult = {
-                id: previewOutcome.previewId,
+
+    const allResults: ValidationResult[] = [];
+
+    for (const file of selectedFiles) {
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            const [analysis, previewOutcome] = await Promise.all([
+                analyzeCreativeAssets(file),
+                processAndCacheFile(formData)
+            ]);
+            
+            const validationPart = await buildValidationResult(file, analysis);
+            
+            let previewResult: PreviewResult | null = null;
+            if (previewOutcome && !('error' in previewOutcome)) {
+                previewResult = {
+                    id: previewOutcome.previewId,
+                    fileName: file.name,
+                    entryPoint: previewOutcome.entryPoint,
+                    securityWarning: previewOutcome.securityWarning
+                };
+            } else if (previewOutcome && 'error' in previewOutcome) {
+                toast({ title: `Preview Error for ${file.name}`, description: previewOutcome.error, variant: "destructive" });
+            }
+
+            allResults.push({ 
+                id: `${file.name}-${Date.now()}`, 
+                fileName: file.name, 
+                fileSize: file.size, 
+                ...validationPart,
+                preview: previewResult
+            });
+        } catch (error) {
+            console.error(`Validation failed for ${file.name}:`, error);
+            toast({ title: `Validation Error for ${file.name}`, description: "An unexpected error occurred during processing.", variant: "destructive" });
+            allResults.push({
+                id: `${file.name}-${Date.now()}`,
                 fileName: file.name,
-                entryPoint: previewOutcome.entryPoint,
-                securityWarning: previewOutcome.securityWarning
-            };
-        } else if (previewOutcome && 'error' in previewOutcome) {
-            console.error(`[Validator] Preview error for ${file.name}:`, previewOutcome.error);
-            toast({ title: `Preview Error for ${file.name}`, description: previewOutcome.error, variant: "destructive" });
+                fileSize: file.size,
+                status: 'error' as 'error',
+                issues: [createIssuePageClient('error', 'File processing failed', 'An unexpected error occurred.')],
+                preview: null
+            });
         }
+    }
 
-        const finalResult = { 
-            id: `${file.name}-${Date.now()}`, 
-            fileName: file.name, 
-            fileSize: file.size, 
-            ...validationPart,
-            preview: previewResult
-        };
-        console.log(`[Validator] Final validation object for ${file.name}:`, finalResult);
-        return finalResult;
-
-      } catch (error) {
-        console.error(`[Validator] Validation failed for ${file.name}:`, error);
-        toast({ title: `Validation Error for ${file.name}`, description: "An unexpected error occurred during processing.", variant: "destructive" });
-        return {
-          id: `${file.name}-${Date.now()}`,
-          fileName: file.name,
-          fileSize: file.size,
-          status: 'error' as 'error',
-          issues: [createIssuePageClient('error', 'File processing failed', 'An unexpected error occurred.')],
-          preview: null
-        }
-      }
-    });
-
-    const settledResults = await Promise.allSettled(resultsPromises);
-    
-    const finalResults = settledResults.map(res => {
-        if (res.status === 'fulfilled') {
-            return res.value;
-        } else {
-            console.error("A validation promise was rejected:", res.reason);
-            // We return a placeholder error object. The specific file name is lost here,
-            // so we rely on the toast message fired from the catch block above.
-            return null;
-        }
-    }).filter((r): r is ValidationResult => r !== null);
-
-
-    setValidationResults(finalResults);
+    setValidationResults(allResults);
     setIsLoading(false);
-    if (finalResults.length > 0) {
-      toast({ title: "Analysis Complete", description: `Processed ${finalResults.length} file(s). Check the report below.` });
+    if (allResults.length > 0) {
+      toast({ title: "Analysis Complete", description: `Processed ${allResults.length} file(s). Check the report below.` });
     }
   };
   
