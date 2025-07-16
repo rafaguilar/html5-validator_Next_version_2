@@ -120,7 +120,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
             console.log(`[DIAG_ASSETS] ${message} - ${details}`);
             issues.push(createIssue('warning', message, details, 'unsupported-file-type'));
         } else {
-            console.log(`[DIAG_ASSETS] Supported file type found: '${path}'`);
+            console.log(`[DIAG_ASSETS] Supported file type found: '${path}' of type ${fileExt}`);
         }
     });
 

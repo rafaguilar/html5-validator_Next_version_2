@@ -23,7 +23,7 @@ export function FileUploader({
   setSelectedFiles, 
   onValidate, 
   isLoading,
-  validationResults,
+  validationResults = [], // Add default empty array to prevent build errors
 }: FileUploaderProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -91,7 +91,6 @@ export function FileUploader({
             ${isDragging ? 'border-primary bg-primary/10' : 'border-input hover:border-primary/70'}`}
           onDragEnter={handleDragEnter}
           onDragLeave={handleDragLeave}
-          onDragOver={handleDragOver}
           onDrop={handleDrop}
           onClick={() => fileInputRef.current?.click()}
         >

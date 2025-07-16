@@ -57,7 +57,7 @@ const formatBytes = (bytes: number, decimals = 2) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
 };
 
-export function ValidationResults({ results, isLoading }: ValidationResultsProps) {
+export function ValidationResults({ results = [], isLoading }: ValidationResultsProps) {
   const reportRef = useRef<HTMLDivElement>(null);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
@@ -186,7 +186,7 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
       <div ref={reportRef}>
         {results.map(result => {
           // Diagnostic Log
-          console.log(`[DIAG_RENDER] Rendering report for ${result.fileName}. Preview data:`, result.preview);
+          console.log(`[Results] Rendering report for ${result.fileName}. Preview data:`, result.preview);
           
           let headerBgClass = 'bg-muted/30';
           let headerTextClass = 'text-foreground';
@@ -300,7 +300,7 @@ export function ValidationResults({ results, isLoading }: ValidationResultsProps
                   <div className="mt-2 text-sm text-green-600 flex items-center p-3 bg-green-500/10 rounded-md"><CheckCircle2 className="w-5 h-5 mr-2 flex-shrink-0 text-green-500" />Correct top-level clickTag found.</div>
                 )}
 
-                {(sortedIssues || []).length > 0 && (
+                {sortedIssues.length > 0 && (
                   <div>
                     <h4 className="text-md font-medium text-foreground mb-2">Issues Found ({sortedIssues.length}):</h4>
                     <ScrollArea className="h-[200px] w-full rounded-md border">
