@@ -16,7 +16,7 @@ export function Validator() {
   const { toast } = useToast();
 
   const handleValidate = async () => {
-    console.log("Preview and Font Type Formats Fixing_2");
+    console.log("Preview and Font Type Formats Fixing_3");
     if (selectedFiles.length === 0) {
       toast({ title: "No file selected", description: "Please select one or more ZIP files.", variant: "destructive" });
       return;
@@ -40,7 +40,7 @@ export function Validator() {
 
         // Perform client-side analysis first
         const validationPart = await runClientSideValidation(file);
-        console.log(`[DIAG_VALIDATE] Client-side analysis complete for ${file.name}. Issues found: ${validationPart.issues.length}`);
+        console.log(`[DIAG_VALIDATE] Client-side analysis complete for ${file.name}. Issues found: ${(validationPart.issues || []).length}`);
 
         // Then, process for preview (server action)
         const formData = new FormData();
@@ -106,7 +106,7 @@ export function Validator() {
   };
 
   useEffect(() => {
-    if (selectedFiles.length === 0) {
+    if (!selectedFiles || selectedFiles.length === 0) {
         setValidationResults([]);
     }
   }, [selectedFiles]);
@@ -124,7 +124,7 @@ export function Validator() {
           />
         </div>
         <div className="md:col-span-2">
-            <ValidationResults results={validationResults} isLoading={isLoading} />
+            <ValidationResults results={validationResults || []} isLoading={isLoading} />
         </div>
       </div>
     </div>

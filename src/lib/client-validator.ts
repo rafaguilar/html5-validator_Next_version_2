@@ -117,7 +117,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
         if (!allAllowedExtensions.includes(fileExt)) {
             const message = `Unsupported file type in ZIP: '${fileExt}'`;
             const details = `File: '${path}'. This file type is not standard and may not work in all ad platforms.`;
-            console.log(`[DIAG_ASSETS] ${message} - ${details}`);
+            console.log(`[DIAG_ASSETS] Unsupported file found: ${path}`);
             issues.push(createIssue('warning', message, details, 'unsupported-file-type'));
         } else {
             console.log(`[DIAG_ASSETS] Supported file type found: '${path}' of type ${fileExt}`);
