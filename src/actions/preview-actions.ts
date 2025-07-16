@@ -17,15 +17,12 @@ interface ProcessedResult {
 }
 
 export async function processAndCacheFile(formData: FormData): Promise<ProcessedResult | { error: string }> {
-  console.log('[Action] processAndCacheFile started.');
   const file = formData.get('file') as File;
   if (!file) {
-    console.error('[Action] No file found in formData.');
     return { error: 'No file uploaded.' };
   }
 
   const previewId = uuidv4();
-  console.log(`[Action] Generated previewId: ${previewId}`);
   
   try {
     const buffer = Buffer.from(await file.arrayBuffer());
@@ -56,33 +53,24 @@ export async function processAndCacheFile(formData: FormData): Promise<Processed
                 content: fileBuffer.toString('utf-8')
             });
           } catch (e) {
-            console.warn(`Could not read file ${entry.name} as text, skipping for AI analysis.`);
+            // Non-critical error, skip for AI analysis
           }
       }
     }
 
     const entryPoint = findHtmlFile(filePaths);
     if (!entryPoint) {
-      console.error('[Action] No HTML file found in the ZIP.');
       return { error: 'No HTML file found in the ZIP archive.' };
     }
-    console.log(`[Action] Found entry point: ${entryPoint}`);
     
-    // Explicitly await the file cache operation
     await fileCache.set(previewId, filesToCache);
-    console.log(`[Action] Cached ${filesToCache.size} files for previewId ${previewId}`);
     
     const securityWarning = await detectMaliciousArchive(textFileContents);
-    if (securityWarning) {
-        console.log(`[Action] AI Security Warning found: ${securityWarning}`);
-    }
 
     const result = { previewId, entryPoint, securityWarning };
-    console.log('[Action] Successfully processed file. Returning:', result);
     return result;
 
   } catch (error) {
-    console.error('[Action] Critical error processing ZIP file:', error);
     fileCache.cleanup(previewId);
     return { error: 'Failed to process ZIP file.' };
   }

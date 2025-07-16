@@ -185,7 +185,6 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
       </div>
       <div ref={reportRef}>
         {(results || []).map(result => {
-          console.log(`[Results] Rendering report for ${result.fileName}. Preview data:`, result.preview);
           
           let headerBgClass = 'bg-muted/30';
           let headerTextClass = 'text-foreground';
@@ -245,7 +244,6 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
                             </DialogContent>
                         </Dialog>
                     ) : (
-                      // Diagnostic: Show why button is missing
                       <div className="text-xs opacity-70" data-exclude-from-pdf="true">[No Preview]</div>
                     )}
                     <div className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-medium ${badgeTextClass}`}>

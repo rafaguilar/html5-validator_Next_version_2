@@ -16,14 +16,12 @@ export function Validator() {
   const { toast } = useToast();
 
   const handleValidate = async () => {
-    console.log("Preview and Font Type Formats Fixing_4");
     if (selectedFiles.length === 0) {
       toast({ title: "No file selected", description: "Please select one or more ZIP files.", variant: "destructive" });
       return;
     }
 
     setIsLoading(true);
-    // Initialize results with a pending state
     setValidationResults(selectedFiles.map(file => ({
       id: `${file.name}-${file.lastModified}`,
       fileName: file.name,
@@ -36,17 +34,11 @@ export function Validator() {
 
     for (const file of selectedFiles) {
       try {
-        console.log(`[DIAG_VALIDATE] Start processing file: ${file.name}`);
-
-        // Perform client-side analysis first
         const validationPart = await runClientSideValidation(file);
-        console.log(`[DIAG_VALIDATE] Client-side analysis complete for ${file.name}. Issues found: ${(validationPart.issues || []).length}`);
 
-        // Then, process for preview (server action)
         const formData = new FormData();
         formData.append('file', file);
         const previewOutcome = await processAndCacheFile(formData);
-        console.log(`[DIAG_VALIDATE] Server action 'processAndCacheFile' outcome for ${file.name}:`, previewOutcome);
 
         let previewResult: PreviewResult | null = null;
         if (previewOutcome && 'previewId' in previewOutcome) {
@@ -56,15 +48,10 @@ export function Validator() {
             entryPoint: previewOutcome.entryPoint,
             securityWarning: previewOutcome.securityWarning
           };
-          console.log(`[DIAG_VALIDATE] Successfully created previewResult object for ${file.name}`);
         } else if (previewOutcome && 'error' in previewOutcome) {
-          console.error(`[DIAG_VALIDATE] Preview error for ${file.name}:`, previewOutcome.error);
           toast({ title: `Preview Error for ${file.name}`, description: previewOutcome.error, variant: "destructive" });
-        } else {
-            console.error(`[DIAG_VALIDATE] Unknown error from preview action for ${file.name}. Outcome:`, previewOutcome);
         }
 
-        // Combine client-side validation with server-side preview result
         const finalResult: ValidationResult = {
           id: `${file.name}-${file.lastModified}`,
           fileName: file.name,
@@ -73,13 +60,10 @@ export function Validator() {
           preview: previewResult,
         };
         
-        console.log(`[DIAG_VALIDATE] Final combined result for ${file.name}:`, JSON.parse(JSON.stringify(finalResult)));
         allResults.push(finalResult);
 
       } catch (error) {
-        console.error(`[DIAG_VALIDATE] CRITICAL validation failed for ${file.name}:`, error);
         toast({ title: `Validation Error for ${file.name}`, description: "An unexpected error occurred during processing.", variant: "destructive" });
-        // Create a result object even on critical failure
         allResults.push({
           id: `${file.name}-${file.lastModified}`,
           fileName: file.name,
@@ -96,7 +80,6 @@ export function Validator() {
       }
     }
 
-    console.log(`[DIAG_VALIDATE] All files processed. Updating state with ${allResults.length} results.`);
     setValidationResults(allResults);
     setIsLoading(false);
     

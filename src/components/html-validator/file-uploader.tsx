@@ -58,7 +58,6 @@ export function FileUploader({
   const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!isDragging) setIsDragging(true);
   };
 
   const handleDrop = (e: DragEvent<HTMLDivElement>) => {
