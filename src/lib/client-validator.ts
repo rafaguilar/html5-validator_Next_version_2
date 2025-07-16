@@ -93,6 +93,7 @@ interface CreativeAssetAnalysis {
 }
 
 const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis> => {
+    console.log("[DIAG_ASSETS] Starting analysis of creative assets.");
     const issues: ValidationIssue[] = [];
     let foundHtmlPath: string | undefined, htmlContentForAnalysis: string | undefined;
     let isAdobeAnimateProject = false, isCreatopyProject = false;
@@ -107,9 +108,12 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
 
     allZipFiles.forEach(path => {
         const fileExt = (/\.([^.]+)$/.exec(path) || [''])[0].toLowerCase();
-        if (!allAllowedExtensions.includes(fileExt)) {
+        if (allAllowedExtensions.includes(fileExt)) {
+             console.log(`[DIAG_ASSETS] Supported file type found: '${path}' of type ${fileExt}`);
+        } else {
             const message = `Unsupported file type in ZIP: '${fileExt}'`;
             const details = `File: '${path}'. This file type is not standard and may not work in all ad platforms.`;
+            console.warn(`[DIAG_ASSETS] ${message} - ${details}`);
             issues.push(createIssue('warning', message, details, 'unsupported-file-type'));
         }
     });
@@ -121,6 +125,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
     if (htmlFileInfo) {
         foundHtmlPath = htmlFileInfo.path;
         htmlContentForAnalysis = htmlFileInfo.content;
+        console.log(`[DIAG_ASSETS] Found main HTML file: ${foundHtmlPath}`);
     }
   
     if (htmlContentForAnalysis) {

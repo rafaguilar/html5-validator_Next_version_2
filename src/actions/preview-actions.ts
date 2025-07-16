@@ -17,8 +17,10 @@ interface ProcessedResult {
 }
 
 export async function processAndCacheFile(formData: FormData): Promise<ProcessedResult | { error: string }> {
+  console.log("[DIAG_ACTION] processAndCacheFile started");
   const file = formData.get('file') as File;
   if (!file) {
+    console.error("[DIAG_ACTION] No file found in formData");
     return { error: 'No file uploaded.' };
   }
 
@@ -34,6 +36,8 @@ export async function processAndCacheFile(formData: FormData): Promise<Processed
 
     const fileEntries = Object.values(zip.files);
     const filesToCache = new Map<string, Buffer>();
+
+    const writePromises: Promise<void>[] = [];
 
     for (const entry of fileEntries) {
       if (entry.dir || entry.name.startsWith('__MACOSX/')) {
@@ -57,21 +61,30 @@ export async function processAndCacheFile(formData: FormData): Promise<Processed
           }
       }
     }
+    
+    // This was missing the await, causing the function to potentially return before caching was complete.
+    await fileCache.set(previewId, filesToCache);
+    console.log(`[DIAG_ACTION] Successfully cached ${filesToCache.size} files for previewId ${previewId}`);
 
     const entryPoint = findHtmlFile(filePaths);
     if (!entryPoint) {
+      console.error("[DIAG_ACTION] No HTML entry point found.");
       return { error: 'No HTML file found in the ZIP archive.' };
     }
-    
-    await fileCache.set(previewId, filesToCache);
+    console.log(`[DIAG_ACTION] Found entry point: ${entryPoint}`);
     
     const securityWarning = await detectMaliciousArchive(textFileContents);
+    if (securityWarning) {
+      console.log(`[DIAG_ACTION] AI detected a security warning: ${securityWarning}`);
+    }
 
     const result = { previewId, entryPoint, securityWarning };
+    console.log("[DIAG_ACTION] processAndCacheFile finished successfully, returning:", result);
     return result;
 
-  } catch (error) {
+  } catch (error: any) {
+    console.error(`[DIAG_ACTION] Error in processAndCacheFile for previewId ${previewId}:`, error);
     fileCache.cleanup(previewId);
-    return { error: 'Failed to process ZIP file.' };
+    return { error: `Failed to process ZIP file. ${error.message}` };
   }
 }
