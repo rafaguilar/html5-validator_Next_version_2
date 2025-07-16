@@ -16,7 +16,7 @@ export function Validator() {
   const { toast } = useToast();
 
   const handleValidate = async () => {
-    console.log("Preview and Font Type Formats Fixing_3");
+    console.log("Preview and Font Type Formats Fixing_4");
     if (selectedFiles.length === 0) {
       toast({ title: "No file selected", description: "Please select one or more ZIP files.", variant: "destructive" });
       return;
@@ -124,7 +124,7 @@ export function Validator() {
           />
         </div>
         <div className="md:col-span-2">
-            <ValidationResults results={validationResults || []} isLoading={isLoading} />
+            <ValidationResults results={validationResults} isLoading={isLoading} />
         </div>
       </div>
     </div>

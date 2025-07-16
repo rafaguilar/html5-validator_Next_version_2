@@ -23,7 +23,7 @@ export function FileUploader({
   setSelectedFiles, 
   onValidate, 
   isLoading,
-  validationResults = [], // Add default empty array to prevent build errors
+  validationResults = [],
 }: FileUploaderProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
