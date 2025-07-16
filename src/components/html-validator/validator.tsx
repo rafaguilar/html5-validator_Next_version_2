@@ -6,7 +6,6 @@ import type { ValidationResult, PreviewResult } from '@/types';
 import { useToast } from "@/hooks/use-toast";
 import { ValidationResults } from './validation-results';
 import { FileUploader } from './file-uploader';
-import { processAndCacheFile } from '@/actions/preview-actions';
 import { runClientSideValidation } from '@/lib/client-validator';
 
 export function Validator() {
@@ -39,29 +38,33 @@ export function Validator() {
     const allResults: ValidationResult[] = [];
 
     for (const file of selectedFiles) {
-      console.log(`[DIAG_VALIDATE] Start processing file: ${file.name}`);
+      let previewResult: PreviewResult | null = null;
       try {
         const validationPart = await runClientSideValidation(file);
-        console.log(`[DIAG_VALIDATE] Client-side analysis complete for ${file.name}. Issues found: ${validationPart.issues.length}`);
-
+        
         const formData = new FormData();
         formData.append('file', file);
-        const previewOutcome = await processAndCacheFile(formData);
-        console.log(`[DIAG_VALIDATE] Server action 'processAndCacheFile' outcome for ${file.name}:`, previewOutcome);
+        
+        const response = await fetch('/api/process-file', {
+          method: 'POST',
+          body: formData,
+        });
 
+        const previewOutcome = await response.json();
 
-        let previewResult: PreviewResult | null = null;
-        if (previewOutcome && 'previewId' in previewOutcome) {
+        if (!response.ok) {
+            throw new Error(previewOutcome.error || 'Unknown error from process-file API');
+        }
+
+        if (previewOutcome && previewOutcome.previewId) {
           previewResult = {
             id: previewOutcome.previewId,
             fileName: file.name,
             entryPoint: previewOutcome.entryPoint,
             securityWarning: previewOutcome.securityWarning
           };
-          console.log(`[DIAG_VALIDATE] Successfully created previewResult object for ${file.name}`);
-        } else if (previewOutcome && 'error' in previewOutcome) {
-          toast({ title: `Preview Error for ${file.name}`, description: previewOutcome.error, variant: "destructive" });
-           console.error(`[DIAG_VALIDATE] Preview error for ${file.name}:`, previewOutcome.error);
+        } else if (previewOutcome && previewOutcome.error) {
+           toast({ title: `Preview Error for ${file.name}`, description: previewOutcome.error, variant: "destructive" });
         }
 
         const finalResult: ValidationResult = {
@@ -72,11 +75,10 @@ export function Validator() {
           preview: previewResult,
         };
         
-        console.log(`[DIAG_VALIDATE] Final combined result for ${file.name}:`, finalResult);
         allResults.push(finalResult);
 
       } catch (error) {
-        console.error(`[DIAG_VALIDATE] Critical validation error for ${file.name}:`, error);
+        console.error(`CRITICAL: Failed to process file ${file.name} via API.`, error);
         toast({ title: `Validation Error for ${file.name}`, description: "An unexpected error occurred during processing.", variant: "destructive" });
         allResults.push({
           id: `${file.name}-${file.lastModified}`,
@@ -84,9 +86,9 @@ export function Validator() {
           fileSize: file.size,
           status: 'error',
           issues: [{
-            id: `client-critical-${Date.now()}`,
+            id: `api-critical-${Date.now()}`,
             type: 'error',
-            message: 'File processing failed unexpectedly.',
+            message: 'File processing failed via API.',
             details: error instanceof Error ? error.message : String(error)
           }],
           preview: null
@@ -94,7 +96,6 @@ export function Validator() {
       }
     }
     
-    console.log(`[DIAG_VALIDATE] All files processed. Updating state with ${allResults.length} results.`);
     setValidationResults(allResults);
     setIsLoading(false);
     

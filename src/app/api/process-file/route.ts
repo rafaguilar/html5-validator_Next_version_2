@@ -1,27 +1,19 @@
 
 'use server';
 
-import { promises as fs } from 'fs';
-import path from 'path';
-import os from 'os';
+import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import JSZip from 'jszip';
 import { fileCache } from '@/lib/file-cache';
 import { findHtmlFile } from '@/lib/utils';
 import { detectMaliciousArchive } from '@/ai/flows/detect-malicious-archive';
 
-interface ProcessedResult {
-  previewId: string;
-  entryPoint: string;
-  securityWarning: string | null;
-}
-
-export async function processAndCacheFile(formData: FormData): Promise<ProcessedResult | { error: string }> {
-  console.log("[DIAG_ACTION] processAndCacheFile started");
+export async function POST(request: NextRequest) {
+  const formData = await request.formData();
   const file = formData.get('file') as File;
+
   if (!file) {
-    console.error("[DIAG_ACTION] No file found in formData");
-    return { error: 'No file uploaded.' };
+    return NextResponse.json({ error: 'No file uploaded.' }, { status: 400 });
   }
 
   const previewId = uuidv4();
@@ -37,8 +29,6 @@ export async function processAndCacheFile(formData: FormData): Promise<Processed
     const fileEntries = Object.values(zip.files);
     const filesToCache = new Map<string, Buffer>();
 
-    const writePromises: Promise<void>[] = [];
-
     for (const entry of fileEntries) {
       if (entry.dir || entry.name.startsWith('__MACOSX/')) {
         continue;
@@ -49,7 +39,7 @@ export async function processAndCacheFile(formData: FormData): Promise<Processed
       const fileBuffer = await entry.async('nodebuffer');
       filesToCache.set(entry.name, fileBuffer);
       
-      const fileExt = path.extname(entry.name).toLowerCase();
+      const fileExt = (/\.([^.]+)$/.exec(entry.name) || [''])[0].toLowerCase();
       if (textFileExtensions.includes(fileExt)) {
           try {
             textFileContents.push({
@@ -64,27 +54,19 @@ export async function processAndCacheFile(formData: FormData): Promise<Processed
     
     // This was missing the await, causing the function to potentially return before caching was complete.
     await fileCache.set(previewId, filesToCache);
-    console.log(`[DIAG_ACTION] Successfully cached ${filesToCache.size} files for previewId ${previewId}`);
 
     const entryPoint = findHtmlFile(filePaths);
     if (!entryPoint) {
-      console.error("[DIAG_ACTION] No HTML entry point found.");
-      return { error: 'No HTML file found in the ZIP archive.' };
+      return NextResponse.json({ error: 'No HTML file found in the ZIP archive.' }, { status: 400 });
     }
-    console.log(`[DIAG_ACTION] Found entry point: ${entryPoint}`);
     
     const securityWarning = await detectMaliciousArchive(textFileContents);
-    if (securityWarning) {
-      console.log(`[DIAG_ACTION] AI detected a security warning: ${securityWarning}`);
-    }
 
     const result = { previewId, entryPoint, securityWarning };
-    console.log("[DIAG_ACTION] processAndCacheFile finished successfully, returning:", result);
-    return result;
+    return NextResponse.json(result, { status: 200 });
 
   } catch (error: any) {
-    console.error(`[DIAG_ACTION] Error in processAndCacheFile for previewId ${previewId}:`, error);
     fileCache.cleanup(previewId);
-    return { error: `Failed to process ZIP file. ${error.message}` };
+    return NextResponse.json({ error: `Failed to process ZIP file. ${error.message}` }, { status: 500 });
   }
 }
