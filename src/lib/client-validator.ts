@@ -103,7 +103,6 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
     let foundHtmlPath: string | undefined, htmlContentForAnalysis: string | undefined;
     let isAdobeAnimateProject = false, isCreatopyProject = false;
 
-    // Comprehensive list of allowed file extensions
     const allowedTextExtensions = ['.html', '.css', '.js', '.json', '.txt', '.svg', '.xml'];
     const allowedImageExtensions = ['.gif', '.jpg', '.jpeg', '.png'];
     const allowedFontExtensions = ['.eot', '.otf', '.ttf', '.woff', '.woff2'];
