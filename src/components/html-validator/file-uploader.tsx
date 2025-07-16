@@ -15,7 +15,7 @@ interface FileUploaderProps {
   setSelectedFiles: React.Dispatch<React.SetStateAction<File[]>>;
   onValidate: () => void;
   isLoading: boolean;
-  validationResults: ValidationResult[];
+  validationResults?: ValidationResult[];
 }
 
 export function FileUploader({ 
@@ -91,6 +91,7 @@ export function FileUploader({
             ${isDragging ? 'border-primary bg-primary/10' : 'border-input hover:border-primary/70'}`}
           onDragEnter={handleDragEnter}
           onDragLeave={handleDragLeave}
+          onDragOver={handleDragOver}
           onDrop={handleDrop}
           onClick={() => fileInputRef.current?.click()}
         >
