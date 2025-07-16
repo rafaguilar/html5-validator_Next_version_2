@@ -185,7 +185,8 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
       </div>
       <div ref={reportRef}>
         {(results || []).map(result => {
-          console.log(`[Results] Rendering report for ${result.fileName}. Preview data:`, result.preview);
+          const previewStatus = result.preview ? `Object with id: ${result.preview.id}` : (result.preview === null ? 'null' : 'undefined');
+          console.log(`[TRACE] ValidationResults: Rendering report for ${result.fileName}. Preview data is: ${previewStatus}`);
           
           let headerBgClass = 'bg-muted/30';
           let headerTextClass = 'text-foreground';
