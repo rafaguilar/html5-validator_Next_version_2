@@ -24,6 +24,7 @@ async function set(id: string, files: Map<string, Buffer>): Promise<void> {
 
   const writePromises = Array.from(files.entries()).map(async ([filePath, fileBuffer]) => {
     const absolutePath = path.join(previewDir, filePath);
+    // Ensure subdirectory exists before writing file
     await fs.mkdir(path.dirname(absolutePath), { recursive: true });
     await fs.writeFile(absolutePath, fileBuffer);
   });
