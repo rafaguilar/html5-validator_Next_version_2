@@ -11,14 +11,9 @@ interface CachedFile {
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 const TEMP_DIR = path.join(os.tmpdir(), 'html-validator-previews');
 
-// Ensure the base temp directory exists on startup
-fs.mkdir(TEMP_DIR, { recursive: true }).catch(err => {
-    console.error("Failed to create base temp directory for cache.", err);
-});
-
-
 async function set(id: string, files: Map<string, Buffer>): Promise<void> {
   const previewDir = path.join(TEMP_DIR, id);
+  // Ensure the base temp directory and the preview-specific directory exist on-demand.
   await fs.mkdir(previewDir, { recursive: true });
 
   const writePromises = Array.from(files.entries()).map(async ([filePath, fileBuffer]) => {
@@ -28,7 +23,6 @@ async function set(id: string, files: Map<string, Buffer>): Promise<void> {
     await fs.writeFile(absolutePath, fileBuffer);
   });
 
-  // This will throw if any file fails to write, which will be caught by the API route.
   await Promise.all(writePromises);
 }
 
@@ -71,7 +65,6 @@ async function cleanup(id: string) {
         await fs.rm(previewDir, { recursive: true, force: true });
     } catch (err) {
         // It's okay if it fails, might have been cleaned up already.
-        // console.error(`Failed to delete expired cache directory: ${previewDir}`, err);
     }
 }
 
