@@ -17,7 +17,7 @@ import { BannerPreview } from './banner-preview';
 
 
 interface ValidationResultsProps {
-  results: ValidationResult[];
+  results?: ValidationResult[];
   isLoading: boolean;
 }
 
@@ -185,8 +185,6 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
       </div>
       <div ref={reportRef}>
         {(results || []).map(result => {
-          const previewStatus = result.preview ? `Object with id: ${result.preview.id}` : (result.preview === null ? 'null' : 'undefined');
-          console.log(`[TRACE] ValidationResults: Rendering report for ${result.fileName}. Preview data is: ${previewStatus}`);
           
           let headerBgClass = 'bg-muted/30';
           let headerTextClass = 'text-foreground';
