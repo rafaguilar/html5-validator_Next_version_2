@@ -2,7 +2,7 @@
 "use client";
 
 import type { ReactNode } from 'react';
-import React, { useRef, useState } from 'react';
+import React, from 'react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import type { ValidationResult, ValidationIssue } from '@/types';
@@ -12,7 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CheckCircle2, XCircle, AlertTriangle, FileText, Image as ImageIconLucide, Archive, LinkIcon, Download, Loader2, Info, MonitorPlay } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
 import { BannerPreview } from './banner-preview';
 
 
@@ -58,8 +58,8 @@ const formatBytes = (bytes: number, decimals = 2) => {
 };
 
 export function ValidationResults({ results = [], isLoading }: ValidationResultsProps) {
-  const reportRef = useRef<HTMLDivElement>(null);
-  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const reportRef = React.useRef<HTMLDivElement>(null);
+  const [isGeneratingPdf, setIsGeneratingPdf] = React.useState(false);
 
   const handleDownloadPdf = () => {
     const input = reportRef.current;
@@ -237,6 +237,9 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
                             <DialogContent className="max-w-4xl h-[80vh] flex flex-col p-0">
                                 <DialogHeader className="p-4 border-b">
                                     <DialogTitle>Live Preview: {result.fileName}</DialogTitle>
+                                    <DialogDescription className="text-left">
+                                        This is a sandboxed preview. Some functionality may differ from the final environment.
+                                    </DialogDescription>
                                 </DialogHeader>
                                 <div className="flex-grow overflow-auto">
                                    <BannerPreview result={result.preview} />

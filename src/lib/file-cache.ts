@@ -20,33 +20,16 @@ fs.mkdir(TEMP_DIR, { recursive: true }).catch(err => {
 
 async function set(id: string, files: Map<string, Buffer>): Promise<void> {
   const previewDir = path.join(TEMP_DIR, id);
-  
-  try {
-    await fs.mkdir(previewDir, { recursive: true });
+  await fs.mkdir(previewDir, { recursive: true });
 
-    // Create an array of promises for all file write operations
-    const writePromises = Array.from(files.entries()).map(async ([filePath, fileBuffer]) => {
-      const absolutePath = path.join(previewDir, filePath);
-      // Ensure parent directories exist for nested files in zip
-      await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-      await fs.writeFile(absolutePath, fileBuffer);
-    });
+  const writePromises = Array.from(files.entries()).map(async ([filePath, fileBuffer]) => {
+    const absolutePath = path.join(previewDir, filePath);
+    await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+    await fs.writeFile(absolutePath, fileBuffer);
+  });
 
-    // Wait for all files to be written before proceeding
-    await Promise.all(writePromises);
-
-    // Schedule the cleanup of the directory after the TTL
-    setTimeout(() => {
-      cleanup(id);
-    }, CACHE_TTL_MS);
-
-  } catch (error) {
-      console.error(`Failed to set cache for previewId ${id}`, error);
-      // If setting cache fails, attempt to clean up whatever was created
-      await cleanup(id);
-      // Re-throw error to be caught by the caller
-      throw error;
-  }
+  // This will throw if any file fails to write, which will be caught by the API route.
+  await Promise.all(writePromises);
 }
 
 async function get(id: string, filePath: string): Promise<CachedFile | undefined> {
@@ -92,8 +75,15 @@ async function cleanup(id: string) {
     }
 }
 
+function scheduleCleanup(id: string) {
+    setTimeout(() => {
+        cleanup(id);
+    }, CACHE_TTL_MS);
+}
+
 export const fileCache = {
   set,
   get,
   cleanup,
+  scheduleCleanup,
 };

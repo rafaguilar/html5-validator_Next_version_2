@@ -59,9 +59,13 @@ export async function POST(request: NextRequest) {
     }
     console.log(`[TRACE] /api/process-file: Finished iterating. Found ${filesToCache.size} files to cache.`);
     
+    // This is the critical change: We await the file writing and handle errors here.
     console.log('[TRACE] /api/process-file: Starting file cache set operation.');
     await fileCache.set(previewId, filesToCache);
     console.log('[TRACE] /api/process-file: Completed file cache set operation.');
+
+    // Now that we are sure files are written, we can schedule cleanup.
+    fileCache.scheduleCleanup(previewId);
 
     const entryPoint = findHtmlFile(filePaths);
     if (!entryPoint) {
