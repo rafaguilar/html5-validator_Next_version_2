@@ -24,12 +24,16 @@ async function set(id: string, files: Map<string, Buffer>): Promise<void> {
   try {
     await fs.mkdir(previewDir, { recursive: true });
 
-    for (const [filePath, fileBuffer] of files.entries()) {
+    // Create an array of promises for all file write operations
+    const writePromises = Array.from(files.entries()).map(async ([filePath, fileBuffer]) => {
       const absolutePath = path.join(previewDir, filePath);
       // Ensure parent directories exist for nested files in zip
       await fs.mkdir(path.dirname(absolutePath), { recursive: true });
       await fs.writeFile(absolutePath, fileBuffer);
-    }
+    });
+
+    // Wait for all files to be written before proceeding
+    await Promise.all(writePromises);
 
     // Schedule the cleanup of the directory after the TTL
     setTimeout(() => {
