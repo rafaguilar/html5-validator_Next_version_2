@@ -16,7 +16,7 @@ export function Validator() {
 
   useEffect(() => {
     // This effect will run once when the component mounts.
-    console.log("[TRACE] Validator.tsx: Component mounted. Preview and Font Type Formats Fixing_4");
+    console.log("[TRACE] Validator.tsx: Component mounted. Adding comprehensive tracing.");
   }, []);
 
 
