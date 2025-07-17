@@ -59,12 +59,11 @@ export async function POST(request: NextRequest) {
     }
     console.log(`[TRACE] /api/process-file: Finished iterating. Found ${filesToCache.size} files to cache.`);
     
-    // This is the critical change: We await the file writing and handle errors here.
-    console.log('[TRACE] /api/process-file: Starting file cache set operation.');
+    console.log('[TRACE] /api/process-file: Starting file cache set operation (in-memory).');
     await fileCache.set(previewId, filesToCache);
-    console.log('[TRACE] /api/process-file: Completed file cache set operation.');
+    console.log('[TRACE] /api/process-file: Completed file cache set operation (in-memory).');
 
-    // Now that we are sure files are written, we can schedule cleanup.
+    // Schedule cleanup for the in-memory entry
     fileCache.scheduleCleanup(previewId);
 
     const entryPoint = findHtmlFile(filePaths);
@@ -84,7 +83,7 @@ export async function POST(request: NextRequest) {
 
   } catch (error: any) {
     console.error(`[TRACE] /api/process-file: CRITICAL error during processing. Cleaning up cache for ${previewId}.`, error);
-    fileCache.cleanup(previewId);
+    fileCache.cleanup(previewId); // Cleanup in-memory cache on error
     return NextResponse.json({ error: `Failed to process ZIP file. ${error.message}` }, { status: 500 });
   }
 }

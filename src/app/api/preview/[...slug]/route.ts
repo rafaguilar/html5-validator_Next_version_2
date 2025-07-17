@@ -16,7 +16,11 @@ export async function GET(
   const fileData = await fileCache.get(previewId, relativePath);
 
   if (!fileData) {
-    return new NextResponse('Preview not found or has expired', { status: 404 });
+    // Return a plain text response for 404 to avoid browser MIME type errors
+    return new NextResponse(`Preview asset not found or expired: /${relativePath}`, { 
+        status: 404,
+        headers: { 'Content-Type': 'text/plain' },
+    });
   }
   
   return new NextResponse(fileData.buffer, {

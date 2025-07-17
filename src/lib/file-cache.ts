@@ -1,7 +1,4 @@
 
-import { promises as fs } from 'fs';
-import path from 'path';
-import os from 'os';
 import mime from 'mime-types';
 
 interface CachedFile {
@@ -9,71 +6,71 @@ interface CachedFile {
   contentType: string;
 }
 
+interface CacheEntry {
+  files: Map<string, CachedFile>;
+  timestamp: number;
+}
+
+// In-memory cache
+const memoryCache = new Map<string, CacheEntry>();
+
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
-const TEMP_DIR = path.join(os.tmpdir(), 'html-validator-previews');
 
-async function set(id: string, files: Map<string, Buffer>): Promise<void> {
-  const previewDir = path.join(TEMP_DIR, id);
-  // Ensure the base temp directory and the preview-specific directory exist on-demand.
-  await fs.mkdir(previewDir, { recursive: true });
+async function set(id: string, filesToCache: Map<string, Buffer>): Promise<void> {
+  const filesForCache = new Map<string, CachedFile>();
+  for (const [filePath, fileBuffer] of filesToCache.entries()) {
+    const contentType = mime.lookup(filePath) || 'application/octet-stream';
+    filesForCache.set(filePath, {
+      buffer: fileBuffer,
+      contentType: contentType,
+    });
+  }
 
-  const writePromises = Array.from(files.entries()).map(async ([filePath, fileBuffer]) => {
-    const absolutePath = path.join(previewDir, filePath);
-    // Ensure subdirectory exists before writing file
-    await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-    await fs.writeFile(absolutePath, fileBuffer);
+  memoryCache.set(id, {
+    files: filesForCache,
+    timestamp: Date.now(),
   });
-
-  await Promise.all(writePromises);
+  
+  // No need to await, operation is synchronous
+  return Promise.resolve();
 }
 
 async function get(id: string, filePath: string): Promise<CachedFile | undefined> {
-    const previewDir = path.join(TEMP_DIR, id);
-    const absolutePath = path.join(previewDir, filePath);
+  const entry = memoryCache.get(id);
 
-    // Security check to prevent path traversal attacks
-    if (!absolutePath.startsWith(previewDir)) {
-        console.warn(`Path traversal attempt blocked: ${filePath}`);
-        return undefined;
-    }
+  if (!entry) {
+    return undefined; // Preview ID not found
+  }
 
-    try {
-        const fileStat = await fs.stat(absolutePath);
-        if(fileStat.isDirectory()) {
-            return undefined; // Don't serve directories
-        }
-        
-        const buffer = await fs.readFile(absolutePath);
-        const contentType = mime.lookup(absolutePath) || 'application/octet-stream';
+  // Check for expiration
+  if (Date.now() - entry.timestamp > CACHE_TTL_MS) {
+    cleanup(id);
+    return undefined; // Expired
+  }
 
-        // Check if the directory has expired (by checking its creation time)
-        const dirStat = await fs.stat(previewDir);
-        if(Date.now() - dirStat.mtime.getTime() > CACHE_TTL_MS) {
-            cleanup(id);
-            return undefined; // Entry has expired
-        }
-
-        return { buffer, contentType };
-    } catch (error) {
-        // This is expected if the file or directory doesn't exist (e.g., expired and cleaned up)
-        return undefined;
-    }
+  return entry.files.get(filePath);
 }
 
-async function cleanup(id: string) {
-    const previewDir = path.join(TEMP_DIR, id);
-    try {
-        await fs.rm(previewDir, { recursive: true, force: true });
-    } catch (err) {
-        // It's okay if it fails, might have been cleaned up already.
-    }
+function cleanup(id: string) {
+  memoryCache.delete(id);
 }
 
 function scheduleCleanup(id: string) {
-    setTimeout(() => {
-        cleanup(id);
-    }, CACHE_TTL_MS);
+  setTimeout(() => {
+    cleanup(id);
+  }, CACHE_TTL_MS);
 }
+
+// Periodically clean up expired entries to prevent memory leaks
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, entry] of memoryCache.entries()) {
+    if (now - entry.timestamp > CACHE_TTL_MS) {
+      cleanup(id);
+    }
+  }
+}, CACHE_TTL_MS / 2);
+
 
 export const fileCache = {
   set,
