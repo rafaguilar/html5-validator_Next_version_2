@@ -10,7 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { CheckCircle2, XCircle, AlertTriangle, FileText, Image as ImageIconLucide, Archive, LinkIcon, Download, Loader2, Info, MonitorPlay } from 'lucide-react';
+import { CheckCircle2, XCircle, AlertTriangle, FileText, Image as ImageIconLucide, Archive, LinkIcon, Download, Loader2, Info, MonitorPlay, Code2 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
 import { BannerPreview } from './banner-preview';
@@ -56,6 +56,23 @@ const formatBytes = (bytes: number, decimals = 2) => {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
 };
+
+const SourceCodeViewer = ({ source }: { source: string }) => {
+  const lines = source.split('\n');
+  return (
+    <ScrollArea className="h-[60vh] w-full font-mono text-xs border rounded-md">
+        <div className="p-4">
+            <div className="flex">
+                <div className="text-right text-muted-foreground pr-4 select-none">
+                    {lines.map((_, i) => <div key={i}>{i + 1}</div>)}
+                </div>
+                <pre className="whitespace-pre-wrap break-words">{source}</pre>
+            </div>
+        </div>
+    </ScrollArea>
+  );
+};
+
 
 export function ValidationResults({ results = [], isLoading }: ValidationResultsProps) {
   const reportRef = React.useRef<HTMLDivElement>(null);
@@ -226,11 +243,11 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
                   <CardTitle className={`text-lg font-semibold truncate ${headerTextClass}`} title={result.fileName}>{result.fileName}</CardTitle>
                   <CardDescription className={`text-xs ${headerTextClass} opacity-80`}>Validation Status</CardDescription>
                 </div>
-                <div className="flex items-center gap-2">
-                    {result.preview ? (
+                <div className="flex items-center gap-2" data-exclude-from-pdf="true">
+                    {result.preview?.processedHtml && (
                         <Dialog>
                             <DialogTrigger asChild>
-                                <Button variant="secondary" size="sm" data-exclude-from-pdf="true" className="h-8">
+                                <Button variant="secondary" size="sm" className="h-8">
                                     <MonitorPlay className="w-4 h-4 mr-2" /> Preview
                                 </Button>
                             </DialogTrigger>
@@ -246,8 +263,24 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
                                 </div>
                             </DialogContent>
                         </Dialog>
-                    ) : (
-                      <div className="text-xs opacity-70" data-exclude-from-pdf="true">[No Preview]</div>
+                    )}
+                    {result.htmlContent && (
+                       <Dialog>
+                            <DialogTrigger asChild>
+                                <Button variant="outline" size="sm" className="h-8">
+                                    <Code2 className="w-4 h-4 mr-2" /> View Source
+                                </Button>
+                            </DialogTrigger>
+                            <DialogContent className="max-w-4xl h-[80vh] flex flex-col">
+                                <DialogHeader>
+                                    <DialogTitle>Source: {result.htmlEntryPoint}</DialogTitle>
+                                     <DialogDescription>
+                                        This is the original HTML content from your file.
+                                    </DialogDescription>
+                                </DialogHeader>
+                                <SourceCodeViewer source={result.htmlContent} />
+                            </DialogContent>
+                        </Dialog>
                     )}
                     <div className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-medium ${badgeTextClass}`}>
                       <StatusIcon status={result.status} /><span className="ml-2 capitalize">{result.status}</span>
@@ -272,7 +305,7 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
                       {result.fileStructureOk ? <CheckCircle2 className="w-5 h-5 text-green-500 mr-3 mt-0.5 flex-shrink-0" /> : <XCircle className="w-5 h-5 text-destructive mr-3 mt-0.5 flex-shrink-0" />}
                       <div>
                         <p className="font-medium text-foreground">File Structure</p>
-                        <p className="text-muted-foreground">{result.fileStructureOk ? 'Valid (HTML found)' : 'Invalid (HTML not found)'}</p>
+                        <p className="text-muted-foreground">{result.fileStructureOk ? `Valid (Using ${result.htmlEntryPoint})` : 'Invalid (HTML not found)'}</p>
                       </div>
                     </div>
                   )}

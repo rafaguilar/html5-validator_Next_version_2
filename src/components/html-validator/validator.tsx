@@ -42,6 +42,7 @@ export function Validator() {
 
     for (const file of selectedFiles) {
       let previewResult: PreviewResult | null = null;
+      let finalResult: ValidationResult | null = null;
       try {
         console.log(`[TRACE] Validator.tsx: Starting client-side validation for ${file.name}.`);
         const validationPart = await runClientSideValidation(file);
@@ -57,53 +58,58 @@ export function Validator() {
         });
         console.log(`[TRACE] Validator.tsx: Received response from server for ${file.name}. Status: ${response.status}`);
 
-        const previewOutcome = await response.json();
+        const serverOutcome = await response.json();
 
         if (!response.ok) {
-            console.error(`[TRACE] Validator.tsx: Server returned an error for ${file.name}.`, previewOutcome.error);
-            throw new Error(previewOutcome.error || 'Unknown error from process-file API');
+            console.error(`[TRACE] Validator.tsx: Server returned an error for ${file.name}.`, serverOutcome.error);
+            throw new Error(serverOutcome.error || 'Unknown error from process-file API');
         }
 
-        if (previewOutcome && previewOutcome.previewId) {
+        if (serverOutcome.processedHtml) {
           previewResult = {
-            id: previewOutcome.previewId,
+            id: `${file.name}-${Date.now()}`,
             fileName: file.name,
-            entryPoint: previewOutcome.entryPoint,
-            securityWarning: previewOutcome.securityWarning
+            entryPoint: serverOutcome.entryPoint,
+            processedHtml: serverOutcome.processedHtml,
+            securityWarning: null,
           };
-          console.log(`[TRACE] Validator.tsx: Successfully created previewResult object for ${file.name}`, previewResult);
-        } else if (previewOutcome && previewOutcome.error) {
-           console.warn(`[TRACE] Validator.tsx: Preview generation failed for ${file.name}.`, previewOutcome.error);
-           toast({ title: `Preview Error for ${file.name}`, description: previewOutcome.error, variant: "destructive" });
+          console.log(`[TRACE] Validator.tsx: Successfully created previewResult object for ${file.name}`);
+        } else if (serverOutcome.error) {
+           console.warn(`[TRACE] Validator.tsx: Preview generation failed for ${file.name}.`, serverOutcome.error);
+           toast({ title: `Preview Error for ${file.name}`, description: serverOutcome.error, variant: "destructive" });
         }
 
-        const finalResult: ValidationResult = {
+        finalResult = {
           id: `${file.name}-${file.lastModified}`,
           fileName: file.name,
           fileSize: file.size,
           ...validationPart,
           preview: previewResult,
         };
-        console.log(`[TRACE] Validator.tsx: Combined client and server results for ${file.name}.`, finalResult);
+        console.log(`[TRACE] Validator.tsx: Combined client and server results for ${file.name}.`);
         
         allResults.push(finalResult);
 
       } catch (error) {
         console.error(`[TRACE] Validator.tsx: CRITICAL error processing file ${file.name}.`, error);
         toast({ title: `Validation Error for ${file.name}`, description: "An unexpected error occurred during processing.", variant: "destructive" });
-        allResults.push({
+        
+        const errorResult = {
           id: `${file.name}-${file.lastModified}`,
           fileName: file.name,
           fileSize: file.size,
-          status: 'error',
+          status: 'error' as const,
           issues: [{
             id: `api-critical-${Date.now()}`,
-            type: 'error',
+            type: 'error' as const,
             message: 'File processing failed via API.',
             details: error instanceof Error ? error.message : String(error)
           }],
           preview: null
-        });
+        };
+        // If client-side validation ran, merge its results
+        const existingValidationPart = finalResult ? (({ status, issues, ...rest }) => rest)(finalResult) : {};
+        allResults.push({ ...errorResult, ...existingValidationPart });
       }
     }
     

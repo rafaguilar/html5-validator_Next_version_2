@@ -199,6 +199,8 @@ export const runClientSideValidation = async (file: File): Promise<Omit<Validati
         issues,
         adDimensions,
         fileStructureOk: !!analysis.foundHtmlPath,
+        htmlEntryPoint: analysis.foundHtmlPath,
+        htmlContent: analysis.htmlContent,
         detectedClickTags: detectedClickTags.length > 0 ? detectedClickTags : undefined,
         maxFileSize: MAX_FILE_SIZE,
         hasCorrectTopLevelClickTag: detectedClickTags.some(t => t.name === "clickTag" && t.isHttps)

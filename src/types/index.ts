@@ -20,6 +20,8 @@ export interface ValidationResult {
   issues: ValidationIssue[];
   adDimensions?: { width: number; height: number; actual?: {width: number; height: number} };
   fileStructureOk?: boolean;
+  htmlEntryPoint?: string;
+  htmlContent?: string;
   detectedClickTags?: ClickTagInfo[];
   fileSize?: number;
   maxFileSize?: number;
@@ -28,8 +30,9 @@ export interface ValidationResult {
 }
 
 export interface PreviewResult {
-  id: string; // The unique ID for the preview session
+  id: string;
   fileName: string;
-  entryPoint: string; // The path to the main HTML file
+  entryPoint: string;
+  processedHtml: string;
   securityWarning: string | null;
 }
