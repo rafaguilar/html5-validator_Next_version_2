@@ -259,7 +259,7 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
                                     </DialogDescription>
                                 </DialogHeader>
                                 <div className="flex-grow overflow-auto">
-                                   <BannerPreview result={result.preview} />
+                                   <BannerPreview result={result.preview} onRefresh={() => {}} />
                                 </div>
                             </DialogContent>
                         </Dialog>
@@ -267,7 +267,7 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
                     {result.htmlContent && (
                        <Dialog>
                             <DialogTrigger asChild>
-                                <Button variant="outline" size="sm" className="h-8">
+                                <Button variant="outline" size="sm" className="h-8 text-foreground">
                                     <Code2 className="w-4 h-4 mr-2" /> View Source
                                 </Button>
                             </DialogTrigger>
