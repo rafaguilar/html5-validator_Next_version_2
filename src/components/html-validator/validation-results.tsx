@@ -110,14 +110,9 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
   
     for (const card of reportCards) {
       const elementsToHide = Array.from(card.querySelectorAll('[data-exclude-from-pdf="true"]')) as HTMLElement[];
-      const issuesScrollArea = card.querySelector('[data-issues-scroll-area="true"]') as HTMLElement | null;
       
       elementsToHide.forEach(el => el.style.display = 'none');
-      if (issuesScrollArea) {
-        issuesScrollArea.style.maxHeight = 'none';
-        issuesScrollArea.style.overflow = 'visible';
-      }
-  
+      
       try {
         const canvas = await html2canvas(card, {
           scale: 2,
@@ -131,10 +126,6 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
       }
   
       elementsToHide.forEach(el => el.style.display = '');
-      if (issuesScrollArea) {
-        issuesScrollArea.style.maxHeight = '';
-        issuesScrollArea.style.overflow = '';
-      }
     }
   
     pdf.save('validation-report.pdf');
@@ -191,6 +182,8 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
             return order[a.type] - order[b.type];
           });
           
+          const defaultExpandedIssues = sortedIssues.map(issue => issue.id);
+
           let dimensionExplanation: React.ReactNode = null;
           if (result.adDimensions && !result.adDimensions.actual) {
             const errorDimensionRuleIds = ['meta-size-invalid-values', 'meta-size-malformed-content', 'meta-size-missing-no-filename', 'meta-size-no-html-no-filename', 'meta-size-fallback-guess', 'meta-size-defaulted'];
@@ -308,7 +301,7 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
                   <div>
                     <h4 className="text-md font-medium text-foreground mb-2">Issues Found ({sortedIssues.length}):</h4>
                     <ScrollArea className="max-h-[400px] w-full rounded-md border" data-issues-scroll-area="true">
-                      <Accordion type="multiple" className="w-full bg-card">
+                      <Accordion type="multiple" defaultValue={defaultExpandedIssues} className="w-full bg-card">
                         {sortedIssues.map(issue => (
                           <AccordionItem value={issue.id} key={issue.id}>
                             <AccordionTrigger className="px-4 py-3 text-sm hover:bg-muted/50 transition-colors">
