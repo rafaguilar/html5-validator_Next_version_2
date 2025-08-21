@@ -78,98 +78,62 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
   const reportRef = React.useRef<HTMLDivElement>(null);
   const [isGeneratingPdf, setIsGeneratingPdf] = React.useState(false);
 
-  const handleDownloadPdf = () => {
-    const input = reportRef.current;
-    if (input && results.length > 0) {
-      setIsGeneratingPdf(true);
-      html2canvas(input, { scale: 2, useCORS: true, logging: false, onclone: (doc) => {
-          doc.querySelectorAll('[data-exclude-from-pdf="true"]').forEach(el => el.remove());
-      }})
-        .then((canvas) => {
-          const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
-          const pdfPageWidth = pdf.internal.pageSize.getWidth();
-          const pdfPageHeight = pdf.internal.pageSize.getHeight();
-          const canvasOriginalWidth = canvas.width;
-          const canvasOriginalHeight = canvas.height;
-          const leftMargin = 30; 
-          const rightMargin = 30;
-          const topMargin = 40; 
-          const bottomMargin = 40;
-          const imagePdfWidth = pdfPageWidth - leftMargin - rightMargin;
-          const imageTotalPdfHeight = (canvasOriginalHeight * imagePdfWidth) / canvasOriginalWidth;
-          let yPositionOnCanvas = 0;
-          let currentYOnPdf = topMargin;
-
-          pdf.setFontSize(18);
-          pdf.text("Validation Report", pdfPageWidth / 2, currentYOnPdf, { align: "center" });
-          currentYOnPdf += 30;
-
-          while (yPositionOnCanvas < canvasOriginalHeight) {
-            let spaceLeftOnPage = pdfPageHeight - currentYOnPdf - bottomMargin;
-            if (spaceLeftOnPage <= 20) {
-              pdf.addPage();
-              currentYOnPdf = topMargin;
-              spaceLeftOnPage = pdfPageHeight - topMargin - bottomMargin;
-            }
-            const remainingImageOverallPdfHeight = imageTotalPdfHeight * ((canvasOriginalHeight - yPositionOnCanvas) / canvasOriginalHeight);
-            const chunkPdfHeight = Math.min(spaceLeftOnPage, remainingImageOverallPdfHeight);
-
-            if (chunkPdfHeight <= 0.1) {
-                if (yPositionOnCanvas < canvasOriginalHeight - 0.1 && (canvasOriginalHeight - yPositionOnCanvas) > 1 ) {
-                    pdf.addPage();
-                    currentYOnPdf = topMargin;
-                    continue;
-                }
-                break;
-            }
-
-            const chunkCanvasHeight = (chunkPdfHeight / imageTotalPdfHeight) * canvasOriginalHeight;
-            const safeChunkCanvasHeight = Math.max(0.1, Math.min(chunkCanvasHeight, canvasOriginalHeight - yPositionOnCanvas));
-
-            if (safeChunkCanvasHeight <= 0.1) {
-                if(yPositionOnCanvas < canvasOriginalHeight - 0.1 && (canvasOriginalHeight - yPositionOnCanvas) > 1 ) {
-                    pdf.addPage();
-                    currentYOnPdf = topMargin;
-                    continue;
-                }
-                break;
-            }
-            
-            const tempChunkCanvas = document.createElement('canvas');
-            tempChunkCanvas.width = canvasOriginalWidth;
-            tempChunkCanvas.height = safeChunkCanvasHeight;
-            const tempCtx = tempChunkCanvas.getContext('2d');
-
-            if (!tempCtx) {
-              console.error("Failed to get 2D context for tempChunkCanvas");
-              setIsGeneratingPdf(false);
-              return;
-            }
-
-            tempCtx.drawImage(canvas,
-              0, yPositionOnCanvas,
-              canvasOriginalWidth, safeChunkCanvasHeight,
-              0, 0,
-              canvasOriginalWidth, safeChunkCanvasHeight
-            );
-
-            const chunkDataUrl = tempChunkCanvas.toDataURL('image/png');
-            pdf.addImage(chunkDataUrl, 'PNG', leftMargin, currentYOnPdf, imagePdfWidth, chunkPdfHeight);
-            yPositionOnCanvas += safeChunkCanvasHeight;
-            currentYOnPdf += 5;
-          }
-
-          pdf.save('validation-report.pdf');
-        })
-        .catch(err => {
-          console.error("Error generating PDF:", err);
-        })
-        .finally(() => {
-          setIsGeneratingPdf(false);
+  const handleDownloadPdf = async () => {
+    const container = reportRef.current;
+    if (!container || results.length === 0) return;
+  
+    setIsGeneratingPdf(true);
+  
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+    const pdfPageWidth = pdf.internal.pageSize.getWidth();
+    const pdfPageHeight = pdf.internal.pageSize.getHeight();
+    const margin = 30;
+    const contentWidth = pdfPageWidth - margin * 2;
+  
+    let currentY = margin;
+  
+    const addCanvasToPdf = (canvas: HTMLCanvasElement) => {
+      const canvasWidth = canvas.width;
+      const canvasHeight = canvas.height;
+      const contentHeight = (canvasHeight * contentWidth) / canvasWidth;
+  
+      if (currentY + contentHeight > pdfPageHeight - margin) {
+        pdf.addPage();
+        currentY = margin;
+      }
+  
+      pdf.addImage(canvas.toDataURL('image/png'), 'PNG', margin, currentY, contentWidth, contentHeight);
+      currentY += contentHeight + 20; // Add some space after each report card
+    };
+  
+    // Find all the individual report cards to render
+    const reportCards = Array.from(container.querySelectorAll('[data-report-card="true"]')) as HTMLElement[];
+  
+    for (const card of reportCards) {
+      // Temporarily remove the buttons from the DOM for the screenshot
+      const elementsToHide = Array.from(card.querySelectorAll('[data-exclude-from-pdf="true"]')) as HTMLElement[];
+      elementsToHide.forEach(el => el.style.display = 'none');
+  
+      try {
+        const canvas = await html2canvas(card, {
+          scale: 2,
+          useCORS: true,
+          logging: false,
+          backgroundColor: null, // Use transparent background
         });
+        addCanvasToPdf(canvas);
+      } catch (err) {
+        console.error("Error generating canvas for a report card:", err);
+      }
+  
+      // Restore the hidden elements
+      elementsToHide.forEach(el => el.style.display = '');
     }
+  
+    pdf.save('validation-report.pdf');
+    setIsGeneratingPdf(false);
   };
-
+  
   if (isLoading && results.length === 0) {
     return null;
   }
@@ -237,7 +201,7 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
           const onlyInfoIssuesExist = (result.issues || []).length > 0 && nonInfoIssuesCount === 0;
 
           return (
-            <Card key={result.id} className="shadow-lg overflow-hidden mb-6">
+            <Card key={result.id} className="shadow-lg overflow-hidden mb-8" data-report-card="true">
               <CardHeader className={`flex flex-row items-center justify-between space-y-0 p-4 ${headerBgClass} ${headerTextClass}`}>
                 <div className="min-w-0">
                   <CardTitle className={`text-lg font-semibold truncate ${headerTextClass}`} title={result.fileName}>{result.fileName}</CardTitle>
