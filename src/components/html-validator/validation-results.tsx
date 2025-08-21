@@ -103,31 +103,38 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
       }
   
       pdf.addImage(canvas.toDataURL('image/png'), 'PNG', margin, currentY, contentWidth, contentHeight);
-      currentY += contentHeight + 20; // Add some space after each report card
+      currentY += contentHeight + 20;
     };
   
-    // Find all the individual report cards to render
     const reportCards = Array.from(container.querySelectorAll('[data-report-card="true"]')) as HTMLElement[];
   
     for (const card of reportCards) {
-      // Temporarily remove the buttons from the DOM for the screenshot
       const elementsToHide = Array.from(card.querySelectorAll('[data-exclude-from-pdf="true"]')) as HTMLElement[];
+      const issuesScrollArea = card.querySelector('[data-issues-scroll-area="true"]') as HTMLElement | null;
+      
       elementsToHide.forEach(el => el.style.display = 'none');
+      if (issuesScrollArea) {
+        issuesScrollArea.style.maxHeight = 'none';
+        issuesScrollArea.style.overflow = 'visible';
+      }
   
       try {
         const canvas = await html2canvas(card, {
           scale: 2,
           useCORS: true,
           logging: false,
-          backgroundColor: null, // Use transparent background
+          backgroundColor: null,
         });
         addCanvasToPdf(canvas);
       } catch (err) {
         console.error("Error generating canvas for a report card:", err);
       }
   
-      // Restore the hidden elements
       elementsToHide.forEach(el => el.style.display = '');
+      if (issuesScrollArea) {
+        issuesScrollArea.style.maxHeight = '';
+        issuesScrollArea.style.overflow = '';
+      }
     }
   
     pdf.save('validation-report.pdf');
@@ -300,7 +307,7 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
                 {(sortedIssues || []).length > 0 && (
                   <div>
                     <h4 className="text-md font-medium text-foreground mb-2">Issues Found ({sortedIssues.length}):</h4>
-                    <ScrollArea className="max-h-[400px] w-full rounded-md border">
+                    <ScrollArea className="max-h-[400px] w-full rounded-md border" data-issues-scroll-area="true">
                       <Accordion type="multiple" className="w-full bg-card">
                         {sortedIssues.map(issue => (
                           <AccordionItem value={issue.id} key={issue.id}>
