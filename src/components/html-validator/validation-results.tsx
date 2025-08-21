@@ -300,7 +300,7 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
                 {(sortedIssues || []).length > 0 && (
                   <div>
                     <h4 className="text-md font-medium text-foreground mb-2">Issues Found ({sortedIssues.length}):</h4>
-                    <ScrollArea className="h-[200px] w-full rounded-md border">
+                    <ScrollArea className="max-h-[400px] w-full rounded-md border">
                       <Accordion type="multiple" className="w-full bg-card">
                         {sortedIssues.map(issue => (
                           <AccordionItem value={issue.id} key={issue.id}>
