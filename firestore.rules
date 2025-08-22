@@ -3,11 +3,12 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Allow public read for shared reports.
     // Allow anyone to create a new report.
-    // Disallow reading, updating, or deleting for security.
+    // Disallow updates and deletes from the client.
     match /reports/{reportId} {
-      allow create: if true;
-      allow read, write: if false;
+      allow read, create: if true;
+      allow update, delete: if false;
     }
   }
 }
