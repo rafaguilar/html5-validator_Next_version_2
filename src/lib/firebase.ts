@@ -1,5 +1,5 @@
-// src/lib/firebase.ts
-import { initializeApp, getApps } from 'firebase/app';
+
+import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
@@ -12,14 +12,15 @@ const firebaseConfig = {
   messagingSenderId: "155850881830"
 };
 
-// Initialize Firebase
-let app;
-if (!getApps().length) {
-  app = initializeApp(firebaseConfig);
-} else {
-  app = getApps()[0];
-}
+// This function ensures Firebase is initialized, either on the server or the client.
+const getFirebaseApp = () => {
+    if (!getApps().length) {
+        return initializeApp(firebaseConfig);
+    }
+    return getApp();
+};
 
+const app = getFirebaseApp();
 const db = getFirestore(app);
 
-export { db };
+export { db, app };
