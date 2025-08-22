@@ -10,10 +10,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { CheckCircle2, XCircle, AlertTriangle, FileText, Image as ImageIconLucide, Archive, LinkIcon, Download, Loader2, Info, MonitorPlay, Code2 } from 'lucide-react';
+import { CheckCircle2, XCircle, AlertTriangle, FileText, Image as ImageIconLucide, Archive, LinkIcon, Download, Loader2, Info, MonitorPlay, Code2, Share2 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
 import { BannerPreview } from './banner-preview';
+import { useToast } from '@/hooks/use-toast';
+import { saveReport } from '@/services/report-service';
 
 
 interface ValidationResultsProps {
@@ -77,6 +79,8 @@ const SourceCodeViewer = ({ source }: { source: string }) => {
 export function ValidationResults({ results = [], isLoading }: ValidationResultsProps) {
   const reportRef = React.useRef<HTMLDivElement>(null);
   const [isGeneratingPdf, setIsGeneratingPdf] = React.useState(false);
+  const [isSharing, setIsSharing] = React.useState(false);
+  const { toast } = useToast();
 
   const handleDownloadPdf = async () => {
     const container = reportRef.current;
@@ -97,7 +101,7 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
       const canvasHeight = canvas.height;
       const contentHeight = (canvasHeight * contentWidth) / canvasWidth;
   
-      if (currentY + contentHeight > pdfPageHeight - margin) {
+      if (currentY + contentHeight > pdfPageHeight - margin && currentY > margin) {
         pdf.addPage();
         currentY = margin;
       }
@@ -110,8 +114,12 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
   
     for (const card of reportCards) {
       const elementsToHide = Array.from(card.querySelectorAll('[data-exclude-from-pdf="true"]')) as HTMLElement[];
+      const issueArea = card.querySelector('[data-issues-scroll-area="true"]') as HTMLElement | null;
       
       elementsToHide.forEach(el => el.style.display = 'none');
+      if (issueArea) {
+        issueArea.classList.remove('max-h-[400px]');
+      }
       
       try {
         const canvas = await html2canvas(card, {
@@ -126,12 +134,37 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
       }
   
       elementsToHide.forEach(el => el.style.display = '');
+      if (issueArea) {
+        issueArea.classList.add('max-h-[400px]');
+      }
     }
   
     pdf.save('validation-report.pdf');
     setIsGeneratingPdf(false);
   };
   
+  const handleShare = async () => {
+    if (results.length === 0) return;
+    setIsSharing(true);
+    try {
+      const reportId = await saveReport(results);
+      const url = `${window.location.origin}/report/${reportId}`;
+      await navigator.clipboard.writeText(url);
+      toast({
+        title: "Link Copied!",
+        description: "A shareable link to the report has been copied to your clipboard.",
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Could not create a shareable link. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSharing(false);
+    }
+  };
+
   if (isLoading && results.length === 0) {
     return null;
   }
@@ -153,13 +186,22 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
       <div className="flex justify-between items-center" id="report-header-to-exclude">
         <h2 className="text-2xl font-semibold text-foreground">Validation Report</h2>
         {results.length > 0 && !results.some(r => r.status === 'pending' || r.status === 'validating') && (
-          <Button onClick={handleDownloadPdf} disabled={isGeneratingPdf} variant="outline" size="sm">
-            {isGeneratingPdf ? (
-              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generating PDF...</>
-            ) : (
-              <><Download className="mr-2 h-4 w-4" /> Download Report</>
-            )}
-          </Button>
+          <div className="flex gap-2">
+            <Button onClick={handleShare} disabled={isSharing} variant="outline" size="sm">
+              {isSharing ? (
+                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Sharing...</>
+              ) : (
+                <><Share2 className="mr-2 h-4 w-4" /> Share</>
+              )}
+            </Button>
+            <Button onClick={handleDownloadPdf} disabled={isGeneratingPdf} variant="outline" size="sm">
+              {isGeneratingPdf ? (
+                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generating PDF...</>
+              ) : (
+                <><Download className="mr-2 h-4 w-4" /> Download Report</>
+              )}
+            </Button>
+          </div>
         )}
       </div>
       <div ref={reportRef}>
