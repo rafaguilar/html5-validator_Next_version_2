@@ -47,8 +47,11 @@ export async function saveReport(reportData: ValidationResult[]): Promise<string
     });
     return docRef.id;
   } catch (error) {
-    console.error("Error saving report to Firestore:", error);
-    throw new Error("Could not save the report.");
+    console.error("[TRACE] Full error saving report to Firestore:", error);
+    if (error instanceof Error) {
+        throw new Error(`Could not save the report: ${error.message}`);
+    }
+    throw new Error("Could not save the report due to an unknown error.");
   }
 }
 

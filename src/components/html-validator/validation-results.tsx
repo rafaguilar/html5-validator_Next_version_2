@@ -118,6 +118,7 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
       
       elementsToHide.forEach(el => el.style.display = 'none');
       if (issueArea) {
+        // Temporarily remove max-height to capture full content
         issueArea.classList.remove('max-h-[400px]');
       }
       
@@ -133,6 +134,7 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
         console.error("Error generating canvas for a report card:", err);
       }
   
+      // Restore styles after capture
       elementsToHide.forEach(el => el.style.display = '');
       if (issueArea) {
         issueArea.classList.add('max-h-[400px]');
@@ -155,9 +157,10 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
         description: "A shareable link to the report has been copied to your clipboard.",
       });
     } catch (error) {
+      console.error("[TRACE] Error creating share link:", error);
       toast({
         title: "Error",
-        description: "Could not create a shareable link. Please try again.",
+        description: error instanceof Error ? error.message : "Could not create a shareable link. Please try again.",
         variant: "destructive",
       });
     } finally {
