@@ -92,6 +92,7 @@ interface CreativeAssetAnalysis {
   allHtmlFilePathsInZip: string[];
   isAdobeAnimateProject: boolean;
   isCreatopyProject: boolean;
+  zip: JSZip;
 }
 
 const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis> => {
@@ -137,7 +138,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
       }
     }
   
-    return { foundHtmlPath, htmlContent: htmlContentForAnalysis, issues, htmlFileCount, allHtmlFilePathsInZip, isAdobeAnimateProject, isCreatopyProject };
+    return { foundHtmlPath, htmlContent: htmlContentForAnalysis, issues, htmlFileCount, allHtmlFilePathsInZip, isAdobeAnimateProject, isCreatopyProject, zip };
 };
 
 export const runClientSideValidation = async (file: File): Promise<Omit<ValidationResult, 'id' | 'fileName' | 'fileSize' | 'preview'>> => {
@@ -180,7 +181,44 @@ export const runClientSideValidation = async (file: File): Promise<Omit<Validati
             actualMetaWidth = parseInt(metaTagMatch[1], 10);
             actualMetaHeight = parseInt(metaTagMatch[2], 10);
         } else {
-            issues.push(createIssue('error', 'Required ad.size meta tag not found.', 'The HTML file must contain a meta tag like: <meta name="ad.size" content="width=300,height=250">', 'missing-meta-size'));
+            const severity = analysis.isAdobeAnimateProject ? 'warning' : 'error';
+            const details = analysis.isAdobeAnimateProject 
+              ? 'Adobe Animate units often rely on canvas dimensions. While not a critical error, including this tag is best practice for platform compatibility.'
+              : 'The HTML file must contain a meta tag like: <meta name="ad.size" content="width=300,height=250">';
+            issues.push(createIssue(severity, 'Required ad.size meta tag not found.', details, 'missing-meta-size'));
+        }
+    }
+
+    if (analysis.isAdobeAnimateProject && analysis.htmlContent) {
+        const doc = new DOMParser().parseFromString(analysis.htmlContent, 'text/html');
+        const canvas = doc.querySelector('canvas');
+        if (canvas && canvas.width && canvas.height) {
+            const canvasWidth = canvas.width;
+            const canvasHeight = canvas.height;
+
+            const jsFiles = Object.values(analysis.zip.files).filter(f => f.name.toLowerCase().endsWith('.js') && !f.dir);
+            let propertiesFound = false;
+
+            for (const jsFile of jsFiles) {
+                const jsContent = await jsFile.async('string');
+                const propsMatch = jsContent.match(/lib\.properties\s*=\s*{\s*[^}]*width:\s*(\d+)\s*,\s*height:\s*(\d+)/);
+                if (propsMatch) {
+                    propertiesFound = true;
+                    const jsWidth = parseInt(propsMatch[1], 10);
+                    const jsHeight = parseInt(propsMatch[2], 10);
+                    if (canvasWidth !== jsWidth || canvasHeight !== jsHeight) {
+                        const message = 'Canvas and JS dimensions do not match.';
+                        const details = `The HTML canvas is ${canvasWidth}x${canvasHeight}px, but the lib.properties in '${jsFile.name}' is set to ${jsWidth}x${jsHeight}px. These must be consistent.`;
+                        issues.push(createIssue('warning', message, details, 'animate-dimension-mismatch'));
+                    }
+                    break; 
+                }
+            }
+            if (!propertiesFound) {
+                 issues.push(createIssue('info', 'Could not find lib.properties in JS files.', `Could not verify canvas dimensions against a JavaScript properties object for this Animate creative.`, 'animate-props-not-found'));
+            }
+        } else {
+            issues.push(createIssue('warning', 'Canvas element not found or missing dimensions.', `Could not find a <canvas> element with width and height attributes in the HTML file for dimension validation.`, 'animate-canvas-not-found'));
         }
     }
 
