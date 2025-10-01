@@ -65,15 +65,35 @@ export function Validator() {
             throw new Error(serverOutcome.error || 'Unknown error from process-file API');
         }
 
-        if (serverOutcome.processedHtml) {
-          previewResult = {
-            id: `${file.name}-${Date.now()}`,
-            fileName: file.name,
-            entryPoint: serverOutcome.entryPoint,
-            processedHtml: serverOutcome.processedHtml,
-            securityWarning: null,
-          };
-          console.log(`[TRACE] Validator.tsx: Successfully created previewResult object for ${file.name}`);
+        // The preview functionality depends on serverOutcome.previewId and serverOutcome.entryPoint
+        // It's no longer returning processedHtml directly
+        if (serverOutcome.previewId && serverOutcome.entryPoint) {
+            // Construct the src for the iframe
+            const previewSrc = `/api/preview/${serverOutcome.previewId}/${serverOutcome.entryPoint}`;
+
+            // We need to fetch the HTML content to create the srcDoc,
+            // because iframe's src attribute pointing to our API route will be sandboxed
+            // and might have issues with relative paths for other assets.
+            // A better way is to rebuild the HTML with correct paths.
+            // For now, let's create processedHtml on the client from the original file content.
+            const tempIframeSrc = `/api/preview/${serverOutcome.previewId}/${serverOutcome.entryPoint}`;
+            
+            // To properly sandbox and handle relative paths, we'll create the srcDoc on the client
+            // using the HTML content we already have from `runClientSideValidation`.
+            let processedHtml = validationPart.htmlContent || '';
+            if (processedHtml) {
+                const headWithBase = `<head><base href="/api/preview/${serverOutcome.previewId}/" />`;
+                processedHtml = processedHtml.replace(/<head>/i, headWithBase);
+            }
+          
+            previewResult = {
+                id: serverOutcome.previewId,
+                fileName: file.name,
+                entryPoint: serverOutcome.entryPoint,
+                processedHtml: processedHtml,
+                securityWarning: serverOutcome.securityWarning || null,
+            };
+            console.log(`[TRACE] Validator.tsx: Successfully created previewResult object for ${file.name}`);
         } else if (serverOutcome.error) {
            console.warn(`[TRACE] Validator.tsx: Preview generation failed for ${file.name}.`, serverOutcome.error);
            toast({ title: `Preview Error for ${file.name}`, description: serverOutcome.error, variant: "destructive" });
@@ -92,7 +112,7 @@ export function Validator() {
 
       } catch (error) {
         console.error(`[TRACE] Validator.tsx: CRITICAL error processing file ${file.name}.`, error);
-        toast({ title: `Validation Error for ${file.name}`, description: "An unexpected error occurred during processing.", variant: "destructive" });
+        toast({ title: `Validation Error for ${file.name}`, description: error instanceof Error ? error.message : "An unexpected error occurred during processing.", variant: "destructive" });
         
         const errorResult = {
           id: `${file.name}-${file.lastModified}`,

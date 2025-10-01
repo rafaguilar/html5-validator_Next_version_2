@@ -104,9 +104,16 @@ export async function POST(request: NextRequest) {
     }
     console.log(`[TRACE] /api/process-file: Found HTML entry point: ${entryPoint}`);
     
-    console.log('[TRACE] /api/process-file: Starting AI security analysis.');
-    const securityWarning = await detectMaliciousArchive(textFileContents);
-    console.log(`[TRACE] /api/process-file: AI security analysis complete. Warning: ${securityWarning || 'None'}`);
+    let securityWarning: string | null = null;
+    try {
+        console.log('[TRACE] /api/process-file: Starting AI security analysis.');
+        securityWarning = await detectMaliciousArchive(textFileContents);
+        console.log(`[TRACE] /api/process-file: AI security analysis complete. Warning: ${securityWarning || 'None'}`);
+    } catch (aiError) {
+        console.warn(`[TRACE] /api/process-file: AI security analysis failed, but continuing. Error:`, aiError);
+        securityWarning = 'AI security analysis could not be performed.';
+    }
+
 
     const result = { previewId, entryPoint, securityWarning };
     console.log('[TRACE] /api/process-file: Successfully prepared result. Sending response.', result);
