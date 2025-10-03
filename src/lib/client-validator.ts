@@ -3,7 +3,10 @@ import JSZip from 'jszip';
 import { HTMLHint, type LintResult, type RuleSet } from 'htmlhint';
 import type { ValidationResult, ValidationIssue, ClickTagInfo } from '@/types';
 
-const MAX_FILE_SIZE = 200 * 1024; // 200KB
+// New tiered file size limits
+const SIZE_LIMIT_ERROR = 300 * 1024; // 300KB
+const SIZE_LIMIT_WARNING_HIGH = 200 * 1024; // 200KB
+const SIZE_LIMIT_WARNING_LOW = 150 * 1024; // 150KB
 
 const createIssue = (type: 'error' | 'warning' | 'info', message: string, details?: string, rule?: string): ValidationIssue => ({
   id: `issue-client-${Math.random().toString(36).substr(2, 9)}`,
@@ -145,10 +148,19 @@ export const runClientSideValidation = async (file: File): Promise<Omit<Validati
     const analysis = await analyzeCreativeAssets(file);
     const issues: ValidationIssue[] = [...analysis.issues];
 
-    if (file.size > MAX_FILE_SIZE) {
-        const message = `File size exceeds limit (${(MAX_FILE_SIZE / 1024).toFixed(0)}KB).`;
-        const details = `Actual size: ${(file.size / 1024).toFixed(2)}KB`;
-        issues.push(createIssue('error', message, details, 'file-size-exceeded'));
+    // Updated file size validation logic
+    if (file.size > SIZE_LIMIT_ERROR) {
+      const message = `File size exceeds 300KB. This is not allowed.`;
+      const details = `Actual size: ${(file.size / 1024).toFixed(2)}KB. You must reduce the file size to be under 300KB.`;
+      issues.push(createIssue('error', message, details, 'file-size-error'));
+    } else if (file.size > SIZE_LIMIT_WARNING_HIGH) {
+      const message = `File size is large (201KB - 300KB).`;
+      const details = `Actual size: ${(file.size / 1024).toFixed(2)}KB. While acceptable, this may impact loading performance. Consider optimizing assets.`;
+      issues.push(createIssue('warning', message, details, 'file-size-warning-high'));
+    } else if (file.size > SIZE_LIMIT_WARNING_LOW) {
+      const message = `File size is approaching the limit (150KB - 200KB).`;
+      const details = `Actual size: ${(file.size / 1024).toFixed(2)}KB. Consider optimizing assets to stay well under the limit.`;
+      issues.push(createIssue('warning', message, details, 'file-size-warning-low'));
     }
 
     if (analysis.htmlFileCount === 0) {
@@ -240,7 +252,7 @@ export const runClientSideValidation = async (file: File): Promise<Omit<Validati
         htmlEntryPoint: analysis.foundHtmlPath,
         htmlContent: analysis.htmlContent,
         detectedClickTags: detectedClickTags.length > 0 ? detectedClickTags : undefined,
-        maxFileSize: MAX_FILE_SIZE,
+        maxFileSize: SIZE_LIMIT_ERROR, // The max size is now 300KB
         hasCorrectTopLevelClickTag: detectedClickTags.some(t => t.name === "clickTag" && t.isHttps)
     };
 };
