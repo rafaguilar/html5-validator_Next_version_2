@@ -25,23 +25,34 @@ async function getFile(id: string, filePath: string, bannerId: string | null): P
       return undefined; // Expired
     }
   
-    // Using fs.access to check for file existence before reading
-    await fs.access(fullPath);
-    
-    let buffer = await fs.readFile(fullPath);
-    const contentType = mime.lookup(filePath) || 'application/octet-stream';
-    
-    // If it's the main HTML file, inject the controller script
-    if (contentType === 'text/html' && bannerId) {
-        const originalHtml = buffer.toString('utf-8');
-        const controllerScript = await getGsapControllerScript();
-        const scriptTag = `<script data-studio-id="gsap-controller" data-banner-id="${bannerId}">${controllerScript}</script>`;
-        const modifiedHtml = originalHtml.replace('</head>', `${scriptTag}</head>`);
-        buffer = Buffer.from(modifiedHtml, 'utf-8');
+    // Add retry logic for file system propagation delay
+    for (let i = 0; i < 3; i++) {
+        try {
+            let buffer = await fs.readFile(fullPath);
+            const contentType = mime.lookup(filePath) || 'application/octet-stream';
+            
+            // If it's the main HTML file, inject the controller script
+            if (contentType === 'text/html' && bannerId) {
+                const originalHtml = buffer.toString('utf-8');
+                const controllerScript = await getGsapControllerScript();
+                const scriptTag = `<script data-studio-id="gsap-controller" data-banner-id="${bannerId}">${controllerScript}</script>`;
+                const modifiedHtml = originalHtml.replace('</head>', `${scriptTag}</head>`);
+                buffer = Buffer.from(modifiedHtml, 'utf-8');
+            }
+
+            return { buffer, contentType };
+        } catch (e: any) {
+            if (e.code === 'ENOENT' && i < 2) {
+                // File not found, wait and retry
+                await new Promise(resolve => setTimeout(resolve, 150)); // Wait 150ms
+            } else if (e.code !== 'ENOENT') {
+                 // Log non-ENOENT errors but don't re-throw to avoid crashing the function
+                 console.error(`[preview.get] Error reading file (attempt ${i+1}):`, e);
+                 return undefined;
+            }
+        }
     }
-
-    return { buffer, contentType };
-
+    return undefined; // Return undefined after all retries fail
   } catch (error: any) {
     if (error.code !== 'ENOENT') {
         console.error(`[preview.get] Critical error for preview ${id}/${filePath}:`, error);
