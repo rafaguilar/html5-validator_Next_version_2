@@ -1,4 +1,3 @@
-
 export interface ValidationIssue {
   id: string;
   type: 'error' | 'warning' | 'info';
@@ -33,6 +32,6 @@ export interface PreviewResult {
   id: string;
   fileName: string;
   entryPoint: string;
-  processedHtml: string;
+  previewSrc: string;
   securityWarning: string | null;
 }

@@ -1,20 +1,14 @@
-
 'use server';
 
 import { db } from '@/lib/firebase';
 import { collection, addDoc, getDoc, doc } from 'firebase/firestore';
-import type { ValidationResult } from '@/types';
+import type { ValidationResult, PreviewResult } from '@/types';
 
 // We need a version of ValidationResult that is serializable for Firestore.
 // The 'preview' object contains non-serializable data in some cases.
 type SerializableValidationResult = Omit<ValidationResult, 'preview'> & {
-    preview: {
-        id: string;
-        fileName: string;
-        entryPoint: string;
-        // processedHtml is fine, securityWarning is fine
-        processedHtml: string | null;
-        securityWarning: string | null;
+    preview: Omit<PreviewResult, 'processedHtml'> & {
+        previewSrc: string | null;
     } | null;
 };
 
@@ -27,17 +21,19 @@ type SerializableValidationResult = Omit<ValidationResult, 'preview'> & {
 export async function saveReport(reportData: ValidationResult[]): Promise<string> {
   try {
     // Sanitize the data to ensure it's serializable
-    const serializableReportData = reportData.map(result => {
+    const serializableReportData: SerializableValidationResult[] = reportData.map(result => {
         const { preview, ...rest } = result;
+        const serializablePreview = preview ? {
+            id: preview.id,
+            fileName: preview.fileName,
+            entryPoint: preview.entryPoint,
+            previewSrc: preview.previewSrc,
+            securityWarning: preview.securityWarning || null,
+        } : null;
+        
         return {
             ...rest,
-            preview: preview ? {
-                id: preview.id,
-                fileName: preview.fileName,
-                entryPoint: preview.entryPoint,
-                processedHtml: preview.processedHtml || null,
-                securityWarning: preview.securityWarning || null,
-            } : null,
+            preview: serializablePreview,
         };
     });
 

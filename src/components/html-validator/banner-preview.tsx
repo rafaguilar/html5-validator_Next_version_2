@@ -1,4 +1,3 @@
-
 "use client";
 
 import React from 'react';
@@ -44,7 +43,7 @@ export function BannerPreview({ result, onRefresh }: BannerPreviewProps) {
         <div className="relative w-full flex-grow bg-muted/30 rounded-lg overflow-hidden border">
            <iframe
               key={result.id}
-              srcDoc={result.processedHtml}
+              src={result.previewSrc}
               sandbox="allow-scripts allow-same-origin"
               className="w-full h-full border-0"
               title={`Preview of ${result.fileName}`}

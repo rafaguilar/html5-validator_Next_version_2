@@ -18,17 +18,6 @@ const nextConfig: NextConfig = {
       },
     ],
   },
-  webpack: (config, { isServer }) => {
-    // Resolve 'fs' and 'path' modules for client-side bundles
-    if (!isServer) {
-      config.resolve.fallback = {
-        ...config.resolve.fallback,
-        fs: false,
-        path: false, // Added fallback for 'path' module
-      };
-    }
-    return config;
-  },
 };
 
 export default nextConfig;

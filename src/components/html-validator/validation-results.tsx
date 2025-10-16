@@ -1,4 +1,3 @@
-
 "use client";
 
 import type { ReactNode } from 'react';
@@ -251,7 +250,7 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
                   <CardDescription className={`text-xs ${headerTextClass} opacity-80`}>Validation Status</CardDescription>
                 </div>
                 <div className="flex items-center gap-2" data-exclude-from-pdf="true">
-                    {result.preview?.processedHtml && (
+                    {result.preview?.previewSrc && (
                         <Dialog>
                             <DialogTrigger asChild>
                                 <Button variant="secondary" size="sm" className="h-8">
