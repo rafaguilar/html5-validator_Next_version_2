@@ -1,3 +1,4 @@
+
 "use client";
 
 import type { ReactNode } from 'react';
@@ -265,7 +266,7 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
                                     </DialogDescription>
                                 </DialogHeader>
                                 <div className="flex-grow overflow-auto">
-                                   <BannerPreview result={result.preview} onRefresh={() => {}} />
+                                   <BannerPreview result={result.preview} />
                                 </div>
                             </DialogContent>
                         </Dialog>
