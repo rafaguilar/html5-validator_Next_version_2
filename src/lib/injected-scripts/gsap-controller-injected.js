@@ -4,26 +4,32 @@
 (function() {
     'use strict';
 
-    // --- Configuration ---
+    // This is a reliable way to get the bannerId from the script tag that loaded this file.
+    var bannerId = document.currentScript ? document.currentScript.getAttribute('data-banner-id') : null;
+
+    if (!bannerId) {
+        console.error('[Studio Controller] Could not determine bannerId. Controller will not function.');
+        return;
+    }
+
     var POLLING_INTERVAL = 100; // ms
     var POLLING_TIMEOUT = 5000; // 5 seconds
     var timeElapsed = 0;
-    var bannerId = document.currentScript.getAttribute('data-banner-id');
 
     var globalTimeline = null;
     var isPlaying = false;
     var canControl = false;
-    var foundGsap = false;
-    
+
     function findGsap() {
         if (window.gsap && typeof window.gsap.exportRoot === 'function') {
             return window.gsap;
         }
         if (window.TimelineLite && typeof window.TimelineLite.exportRoot === 'function') {
+            // Older GSAP (v1/v2) might use TimelineLite on the window
             return window.TimelineLite;
         }
         if (window.TweenLite) {
-            // Older GSAP might not have exportRoot, but we can try to control global timeline
+            // Very old GSAP might just have TweenLite
             return window.TweenLite;
         }
         return null;
@@ -32,38 +38,42 @@
     function initialize() {
         var gsap = findGsap();
         if (gsap) {
-            foundGsap = true;
-            // Use exportRoot if it exists, otherwise we can't safely control multiple timelines
+             // Use exportRoot if it exists, otherwise we can't safely control multiple timelines
             if (typeof gsap.exportRoot === 'function') {
                 try {
-                    globalTimeline = gsap.exportRoot();
-                    isPlaying = !globalTimeline.paused();
-                    canControl = true;
+                    // A brief delay allows animations started on page load to be captured.
+                    setTimeout(function() {
+                        globalTimeline = gsap.exportRoot();
+                        isPlaying = !globalTimeline.paused();
+                        canControl = true;
+                        
+                        // Send ready message to parent
+                        parent.postMessage({
+                            bannerId: bannerId,
+                            status: 'ready',
+                            isPlaying: isPlaying,
+                            canControl: canControl
+                        }, '*');
+
+                    }, 100);
                 } catch(e) {
                     console.warn('[Studio Controller] Error exporting GSAP root timeline:', e);
                     canControl = false;
+                    parent.postMessage({ bannerId: bannerId, status: 'ready', isPlaying: false, canControl: false }, '*');
                 }
             } else {
-                 console.warn('[Studio Controller] GSAP found, but exportRoot() is not available. Cannot guarantee full control.');
+                 console.warn('[Studio Controller] GSAP found, but exportRoot() is not available. Control is disabled.');
                  canControl = false;
+                 parent.postMessage({ bannerId: bannerId, status: 'ready', isPlaying: false, canControl: false }, '*');
             }
         } else {
+            // GSAP not found after timeout
             canControl = false;
-        }
-
-        // Send ready message to parent
-        try {
-            parent.postMessage({
-                bannerId: bannerId,
-                status: 'ready',
-                isPlaying: isPlaying,
-                canControl: canControl
-            }, '*');
-        } catch (e) {
-            // This can happen if the iframe is cross-origin and the parent isn't listening yet.
+            parent.postMessage({ bannerId: bannerId, status: 'ready', isPlaying: false, canControl: false }, '*');
         }
     }
     
+    // Poll for GSAP to be loaded
     var polling = setInterval(function() {
         timeElapsed += POLLING_INTERVAL;
         var gsap = findGsap();
@@ -75,7 +85,7 @@
 
 
     window.addEventListener('message', function(event) {
-        // Basic security check
+        // Basic security check - ensure message has data and is for THIS banner.
         if (!event.data || (event.data.bannerId !== bannerId)) {
             return;
         }
@@ -92,6 +102,7 @@
                 globalTimeline.pause();
                 isPlaying = false;
             } else if (action === 'play') {
+                // Using resume() is better than play() as it respects the playhead position
                 globalTimeline.resume();
                 isPlaying = true;
             }

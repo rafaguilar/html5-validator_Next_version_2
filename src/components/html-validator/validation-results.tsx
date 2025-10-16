@@ -85,59 +85,67 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
 
   React.useEffect(() => {
     // Initialize state for new results
-    const newStates: Record<string, { refreshKey: number; isPlaying: boolean; canControl: boolean | null }> = {};
     results.forEach(result => {
       if (!previewsState[result.id] && result.preview) {
-        newStates[result.id] = { refreshKey: Date.now(), isPlaying: false, canControl: null };
+        setPreviewsState(prevState => ({
+          ...prevState,
+          [result.id]: { refreshKey: Date.now(), isPlaying: false, canControl: null }
+        }));
       }
     });
-    if (Object.keys(newStates).length > 0) {
-      setPreviewsState(prevState => ({ ...prevState, ...newStates }));
-    }
   }, [results, previewsState]);
 
   React.useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
-      const { bannerId, status, isPlaying, canControl, error } = event.data;
+        const { bannerId, status, isPlaying, canControl, error } = event.data;
+        
+        // This check is important to make sure we're acting on messages meant for our banners
+        const resultExists = results.some(r => r.id === bannerId);
+        if (!bannerId || !resultExists) {
+            return;
+        }
 
-      if (!bannerId || !previewsState[bannerId]) return;
+        const currentBannerState = previewsState[bannerId];
+        if (!currentBannerState) return;
 
-      if (status === 'ready') {
-         setPreviewsState(prevState => ({
-          ...prevState,
-          [bannerId]: { ...prevState[bannerId], canControl, isPlaying },
-        }));
-        // Auto-pause on load
-        iframeRefs.current[bannerId]?.contentWindow?.postMessage({ action: 'pause', bannerId }, '*');
-      } else if (status === 'playPauseSuccess') {
-         setPreviewsState(prevState => ({
-          ...prevState,
-          [bannerId]: { ...prevState[bannerId], isPlaying },
-        }));
-      } else if (status === 'playPauseFailed') {
-        console.warn(`[Player Control] Failed for ${bannerId}:`, error);
-        toast({
-            title: "Animation Control Failed",
-            description: "Could not find a controllable GSAP timeline in this creative.",
-            variant: "destructive"
-        });
-        setPreviewsState(prevState => ({
-          ...prevState,
-          [bannerId]: { ...prevState[bannerId], canControl: false },
-        }));
-      }
+        if (status === 'ready') {
+            setPreviewsState(prevState => ({
+                ...prevState,
+                [bannerId]: { ...prevState[bannerId], canControl: canControl, isPlaying: isPlaying },
+            }));
+            // Auto-pause on load
+            if (canControl) {
+              iframeRefs.current[bannerId]?.contentWindow?.postMessage({ action: 'pause', bannerId }, '*');
+            }
+        } else if (status === 'playPauseSuccess') {
+            setPreviewsState(prevState => ({
+                ...prevState,
+                [bannerId]: { ...prevState[bannerId], isPlaying: isPlaying },
+            }));
+        } else if (status === 'playPauseFailed') {
+            console.warn(`[Player Control] Failed for ${bannerId}:`, error);
+            toast({
+                title: "Animation Control Failed",
+                description: "Could not find a controllable GSAP timeline in this creative.",
+                variant: "destructive"
+            });
+            setPreviewsState(prevState => ({
+                ...prevState,
+                [bannerId]: { ...prevState[bannerId], canControl: false },
+            }));
+        }
     };
 
     window.addEventListener('message', handleMessage);
     return () => {
-      window.removeEventListener('message', handleMessage);
+        window.removeEventListener('message', handleMessage);
     };
-  }, [previewsState, toast]);
+  }, [previewsState, results, toast]);
 
   const handleRefresh = (resultId: string) => {
     setPreviewsState(prevState => ({
       ...prevState,
-      [resultId]: { ...prevState[resultId], refreshKey: Date.now(), isPlaying: false, canControl: null },
+      [resultId]: { ...(prevState[resultId] || { refreshKey: 0, isPlaying: false, canControl: null }), refreshKey: Date.now() },
     }));
   };
 
@@ -145,6 +153,8 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
     const iframe = iframeRefs.current[resultId];
     if (!iframe || !iframe.contentWindow) return;
     const currentState = previewsState[resultId];
+    if (currentState.canControl === false) return; // Don't send messages if we know it's uncontrollable
+
     const action = currentState.isPlaying ? 'pause' : 'play';
     iframe.contentWindow.postMessage({ action, bannerId: resultId }, '*');
   };
@@ -335,7 +345,7 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
                                         This is a sandboxed preview.
                                     </DialogDescription>
                                   </div>
-                                  {previewState.canControl && (
+                                  {previewState.canControl === true && (
                                       <Button variant="outline" size="sm" onClick={() => handleTogglePlay(result.id)}>
                                           {previewState.isPlaying ? <Pause className="w-4 h-4 mr-2" /> : <Play className="w-4 h-4 mr-2" />}
                                           {previewState.isPlaying ? 'Pause' : 'Play'}
@@ -344,7 +354,7 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
                                 </DialogHeader>
                                 <div className="flex-grow overflow-auto">
                                    <BannerPreview
-                                      key={previewState.refreshKey}
+                                      key={`${result.id}-${previewState.refreshKey}`}
                                       result={result.preview}
                                       onRefresh={() => handleRefresh(result.id)}
                                       setIframeRef={(el) => (iframeRefs.current[result.id] = el)}
