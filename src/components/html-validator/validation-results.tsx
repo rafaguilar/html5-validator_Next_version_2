@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { CheckCircle2, XCircle, AlertTriangle, FileText, Image as ImageIconLucide, Archive, LinkIcon, Download, Loader2, Info, MonitorPlay, Code2, Share2, Play, Pause } from 'lucide-react';
+import { CheckCircle2, XCircle, AlertTriangle, FileText, Image as ImageIconLucide, Archive, LinkIcon, Download, Loader2, Info, MonitorPlay, Code2, Share2, Play, Pause, RefreshCw } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
 import { BannerPreview } from './banner-preview';
@@ -99,7 +99,6 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
     const handleMessage = (event: MessageEvent) => {
         const { bannerId, status, isPlaying, canControl, error } = event.data;
         
-        // This check is important to make sure we're acting on messages meant for our banners
         const resultExists = results.some(r => r.id === bannerId);
         if (!bannerId || !resultExists) {
             return;
@@ -107,15 +106,15 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
 
         const currentBannerState = previewsState[bannerId];
         if (!currentBannerState) return;
-
+        
         if (status === 'ready') {
             setPreviewsState(prevState => ({
                 ...prevState,
                 [bannerId]: { ...prevState[bannerId], canControl: canControl, isPlaying: isPlaying },
             }));
-            // Auto-pause on load
             if (canControl) {
-              iframeRefs.current[bannerId]?.contentWindow?.postMessage({ action: 'pause', bannerId }, '*');
+                // Auto-pause on load, but only if we have control
+                iframeRefs.current[bannerId]?.contentWindow?.postMessage({ action: 'pause', bannerId }, '*');
             }
         } else if (status === 'playPauseSuccess') {
             setPreviewsState(prevState => ({
@@ -153,7 +152,7 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
     const iframe = iframeRefs.current[resultId];
     if (!iframe || !iframe.contentWindow) return;
     const currentState = previewsState[resultId];
-    if (currentState.canControl === false) return; // Don't send messages if we know it's uncontrollable
+    if (currentState.canControl !== true) return;
 
     const action = currentState.isPlaying ? 'pause' : 'play';
     iframe.contentWindow.postMessage({ action, bannerId: resultId }, '*');
@@ -338,36 +337,29 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
                                 </Button>
                             </DialogTrigger>
                             <DialogContent className="max-w-4xl h-[80vh] flex flex-col p-0">
-                                <DialogHeader className="p-4 border-b flex-row items-center justify-between">
-                                  <div>
-                                    <DialogTitle>Live Preview: {result.fileName}</DialogTitle>
-                                    <DialogDescription>
-                                        This is a sandboxed preview.
-                                    </DialogDescription>
-                                  </div>
-                                  {previewState.canControl === true && (
-                                      <Button variant="outline" size="sm" onClick={() => handleTogglePlay(result.id)}>
-                                          {previewState.isPlaying ? <Pause className="w-4 h-4 mr-2" /> : <Play className="w-4 h-4 mr-2" />}
-                                          {previewState.isPlaying ? 'Pause' : 'Play'}
-                                      </Button>
-                                  )}
-                                </DialogHeader>
-                                <div className="flex-grow overflow-auto">
-                                   <BannerPreview
-                                      key={`${result.id}-${previewState.refreshKey}`}
-                                      result={result.preview}
-                                      onRefresh={() => handleRefresh(result.id)}
-                                      setIframeRef={(el) => (iframeRefs.current[result.id] = el)}
-                                   />
-                                </div>
+                                <BannerPreview
+                                    key={`${result.id}-${previewState.refreshKey}`}
+                                    result={result.preview}
+                                    onRefresh={() => handleRefresh(result.id)}
+                                    setIframeRef={(el) => (iframeRefs.current[result.id] = el)}
+                                />
                             </DialogContent>
                         </Dialog>
                     )}
+                    {previewState.canControl && (
+                       <Button variant="outline" size="sm" className="h-8 text-foreground" onClick={() => handleTogglePlay(result.id)}>
+                            {previewState.isPlaying ? <Pause className="w-4 h-4 mr-2" /> : <Play className="w-4 h-4 mr-2" />}
+                            {previewState.isPlaying ? 'Pause' : 'Play'}
+                        </Button>
+                    )}
+                    <Button variant="outline" size="icon" className="h-8 w-8 text-foreground" onClick={() => handleRefresh(result.id)}>
+                        <RefreshCw className="w-4 h-4" />
+                    </Button>
                     {result.htmlContent && (
                        <Dialog>
                             <DialogTrigger asChild>
                                 <Button variant="outline" size="sm" className="h-8 text-foreground">
-                                    <Code2 className="w-4 h-4 mr-2" /> View Source
+                                    <Code2 className="w-4 h-4 mr-2" /> Source
                                 </Button>
                             </DialogTrigger>
                             <DialogContent className="max-w-4xl h-[80vh] flex flex-col">

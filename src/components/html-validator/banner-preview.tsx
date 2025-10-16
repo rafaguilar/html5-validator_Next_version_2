@@ -17,15 +17,14 @@ export function BannerPreview({ result, onRefresh, setIframeRef }: BannerPreview
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
   useEffect(() => {
-    setIframeRef(iframeRef.current);
+    // Pass the ref up to the parent component
+    if (iframeRef.current) {
+      setIframeRef(iframeRef.current);
+    }
   }, [setIframeRef]);
   
   const handleLoad = () => {
     setIsLoading(false);
-    if (iframeRef.current?.contentWindow) {
-      // Let the parent know the iframe is ready to be controlled
-      iframeRef.current.contentWindow.postMessage({ action: 'init', bannerId: result.id }, '*');
-    }
   };
   
   // Always append bannerId to ensure the controller script knows its ID
