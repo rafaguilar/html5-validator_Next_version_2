@@ -12,6 +12,47 @@ interface CachedFile {
   contentType: string;
 }
 
+const rewriteHtmlPaths = async (htmlContent: string, previewId: string, entryDir: string): Promise<string> => {
+    let processedHtml = htmlContent;
+    const previewDir = path.join(TEMP_DIR, previewId);
+    
+    // Function to recursively get all file paths
+    const getFiles = async (dir: string): Promise<string[]> => {
+        const dirents = await fs.readdir(dir, { withFileTypes: true });
+        const files = await Promise.all(dirents.map((dirent) => {
+            const res = path.resolve(dir, dirent.name);
+            return dirent.isDirectory() ? getFiles(res) : res;
+        }));
+        return Array.prototype.concat(...files);
+    };
+
+    try {
+        const allFiles = await getFiles(previewDir);
+        const relativeAssetPaths = allFiles.map(f => path.relative(previewDir, f));
+
+        // Sort by length descending to replace "img/a.jpg" before "img/"
+        relativeAssetPaths.sort((a, b) => b.length - a.length);
+
+        for (const assetPath of relativeAssetPaths) {
+            // Don't rewrite the HTML file itself
+            if (assetPath.endsWith('.html')) continue;
+
+            const absolutePath = `/api/preview/${previewId}/${assetPath}`;
+            
+            // Create regex to find the asset path in various attributes
+            // Handles src="asset.jpg", href='asset.jpg', url("asset.jpg") etc.
+            // It looks for paths that are not preceded by a scheme (http, https, data) or a slash
+            const regex = new RegExp(`(src|href|poster|data-src|xlink:href)=["'](?!https?:\/\/|data:|\\/)${assetPath}["']`, 'g');
+            processedHtml = processedHtml.replace(regex, `$1="${absolutePath}"`);
+        }
+    } catch(e) {
+        console.error("[Path Rewrite] Failed to rewrite paths, previews may be broken.", e);
+    }
+    
+    return processedHtml;
+};
+
+
 async function getFile(id: string, filePath: string, bannerId: string | null): Promise<CachedFile | undefined> {
   const previewDir = path.join(TEMP_DIR, id);
   const fullPath = path.join(previewDir, filePath);
@@ -33,12 +74,9 @@ async function getFile(id: string, filePath: string, bannerId: string | null): P
             if (contentType === 'text/html') {
                 let originalHtml = buffer.toString('utf-8');
                 
-                // 1. Inject the base tag to fix relative asset paths
-                const basePath = `/api/preview/${id}/${path.dirname(filePath)}/`;
-                const baseTag = `<base href="${basePath}">`;
-                if (!originalHtml.includes('<base href')) {
-                    originalHtml = originalHtml.replace('<head>', `<head>\n    ${baseTag}`);
-                }
+                // 1. Rewrite asset paths to be absolute
+                const entryDir = path.dirname(filePath);
+                originalHtml = await rewriteHtmlPaths(originalHtml, id, entryDir);
                 
                 // 2. Inject the GSAP controller script if bannerId is present
                 if (bannerId) {
