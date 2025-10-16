@@ -7,8 +7,13 @@ import type { ValidationResult, PreviewResult } from '@/types';
 // We need a version of ValidationResult that is serializable for Firestore.
 // The 'preview' object contains non-serializable data in some cases.
 type SerializableValidationResult = Omit<ValidationResult, 'preview'> & {
-    preview: Omit<PreviewResult, 'processedHtml'> & {
-        previewSrc: string | null;
+    preview: {
+        id: string;
+        fileName: string;
+        entryPoint: string;
+        // processedHtml is fine, securityWarning is fine
+        processedHtml: string | null;
+        securityWarning: string | null;
     } | null;
 };
 
@@ -24,10 +29,10 @@ export async function saveReport(reportData: ValidationResult[]): Promise<string
     const serializableReportData: SerializableValidationResult[] = reportData.map(result => {
         const { preview, ...rest } = result;
         const serializablePreview = preview ? {
-            id: preview.id,
+            id: preview.id.split('-')[0], // Remove refresh/control keys from id before saving
             fileName: preview.fileName,
             entryPoint: preview.entryPoint,
-            previewSrc: preview.previewSrc,
+            processedHtml: preview.processedHtml || null,
             securityWarning: preview.securityWarning || null,
         } : null;
         

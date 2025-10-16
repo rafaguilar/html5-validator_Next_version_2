@@ -1,8 +1,7 @@
-
 "use client";
 
 import type { ReactNode } from 'react';
-import React, from 'react';
+import React from 'react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import type { ValidationResult, ValidationIssue } from '@/types';
@@ -10,12 +9,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { CheckCircle2, XCircle, AlertTriangle, FileText, Image as ImageIconLucide, Archive, LinkIcon, Download, Loader2, Info, MonitorPlay, Code2, Share2 } from 'lucide-react';
+import { CheckCircle2, XCircle, AlertTriangle, FileText, Image as ImageIconLucide, Archive, LinkIcon, Download, Loader2, Info, MonitorPlay, Code2, Share2, Play, Pause } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
 import { BannerPreview } from './banner-preview';
 import { useToast } from '@/hooks/use-toast';
 import { saveReport } from '@/services/report-service';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 
 
 interface ValidationResultsProps {
@@ -75,12 +76,123 @@ const SourceCodeViewer = ({ source }: { source: string }) => {
   );
 };
 
+const getGsapControlsInjection = () => {
+    return `
+        <script>
+            document.addEventListener('DOMContentLoaded', function() {
+                // Check if GSAP's main objects are available
+                if (typeof window.gsap === 'undefined' && typeof window.TweenLite === 'undefined' && typeof window.TimelineLite === 'undefined') {
+                    console.log('GSAP not detected on page.');
+                    return;
+                }
+                
+                var gsap = window.gsap || {};
+                var TimelineLite = window.TimelineLite || gsap.timeline;
+                var TweenLite = window.TweenLite || gsap;
+
+                var globalTimeline;
+
+                function exportAndPause() {
+                    try {
+                        if (gsap && typeof gsap.exportRoot === 'function') {
+                           globalTimeline = gsap.exportRoot();
+                        } else if (typeof TimelineLite.exportRoot === 'function') {
+                           globalTimeline = TimelineLite.exportRoot();
+                        } else {
+                            console.error('GSAP exportRoot not found.');
+                            return;
+                        }
+
+                        globalTimeline.pause();
+                        
+                        var playBtn = document.getElementById('studio-play-btn');
+                        if (playBtn) playBtn.style.display = 'block';
+
+                        var pauseBtn = document.getElementById('studio-pause-btn');
+                        if (pauseBtn) pauseBtn.style.display = 'none';
+
+                    } catch(e) {
+                        console.error('Error exporting GSAP root timeline:', e);
+                    }
+                }
+                
+                var style = document.createElement('style');
+                style.innerHTML = \`
+                    #studio-controls { position: absolute; top: 5px; right: 5px; z-index: 99999; display: flex; gap: 5px; }
+                    .studio-btn { width: 32px; height: 32px; background: rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.4); border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; color: white; }
+                    .studio-btn:hover { background: rgba(0,0,0,0.8); }
+                    .studio-btn svg { width: 16px; height: 16px; }
+                \`;
+                document.head.appendChild(style);
+
+                var controlsContainer = document.createElement('div');
+                controlsContainer.id = 'studio-controls';
+
+                var pauseBtn = document.createElement('button');
+                pauseBtn.id = 'studio-pause-btn';
+                pauseBtn.className = 'studio-btn';
+                pauseBtn.title = 'Pause';
+                pauseBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>';
+                pauseBtn.onclick = exportAndPause;
+
+                var playBtn = document.createElement('button');
+                playBtn.id = 'studio-play-btn';
+                playBtn.className = 'studio-btn';
+                playBtn.title = 'Play';
+                playBtn.style.display = 'none';
+                playBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>';
+                playBtn.onclick = function() {
+                    if (globalTimeline) {
+                        globalTimeline.resume();
+                        playBtn.style.display = 'none';
+                        pauseBtn.style.display = 'block';
+                    }
+                };
+
+                controlsContainer.appendChild(pauseBtn);
+                controlsContainer.appendChild(playBtn);
+                document.body.appendChild(controlsContainer);
+            });
+        </script>
+    `;
+};
+
 
 export function ValidationResults({ results = [], isLoading }: ValidationResultsProps) {
   const reportRef = React.useRef<HTMLDivElement>(null);
   const [isGeneratingPdf, setIsGeneratingPdf] = React.useState(false);
   const [isSharing, setIsSharing] = React.useState(false);
   const { toast } = useToast();
+  
+  const [previewsState, setPreviewsState] = React.useState<Record<string, { refreshKey: number; controlsEnabled: boolean }>>({});
+
+  React.useEffect(() => {
+    // Initialize state for new results
+    const newStates: Record<string, { refreshKey: number; controlsEnabled: boolean }> = {};
+    results.forEach(result => {
+      if (!previewsState[result.id]) {
+        newStates[result.id] = { refreshKey: 0, controlsEnabled: false };
+      }
+    });
+    if (Object.keys(newStates).length > 0) {
+      setPreviewsState(prevState => ({ ...prevState, ...newStates }));
+    }
+  }, [results, previewsState]);
+
+  const handleRefresh = (resultId: string) => {
+    setPreviewsState(prevState => ({
+      ...prevState,
+      [resultId]: { ...prevState[resultId], refreshKey: (prevState[resultId]?.refreshKey || 0) + 1 },
+    }));
+  };
+
+  const handleToggleControls = (resultId: string) => {
+    setPreviewsState(prevState => ({
+      ...prevState,
+      [resultId]: { ...prevState[resultId], controlsEnabled: !prevState[resultId]?.controlsEnabled },
+    }));
+  };
+
 
   const handleDownloadPdf = async () => {
     const container = reportRef.current;
@@ -147,7 +259,17 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
     if (results.length === 0) return;
     setIsSharing(true);
     try {
-      const reportId = await saveReport(results);
+      // Need to pass the original results, not the stateful ones with injected code
+      const originalResults = results.map(r => {
+        if(r.preview){
+            // This is a bit of a hack; ideally validator.tsx would also pass the original htmlContent
+            const originalHtml = r.preview.processedHtml.split('<head><base href=')[0] + r.preview.processedHtml.split('</head>')[1];
+             return {...r, preview: {...r.preview, processedHtml: originalHtml}}
+        }
+        return r;
+      });
+
+      const reportId = await saveReport(results); // Pass original data to save
       const url = `${window.location.origin}/report/${reportId}`;
       await navigator.clipboard.writeText(url);
       toast({
@@ -208,6 +330,8 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
       <div ref={reportRef}>
         {(results || []).map(result => {
           
+          const previewState = previewsState[result.id] || { refreshKey: 0, controlsEnabled: false };
+
           let headerBgClass = 'bg-muted/30';
           let headerTextClass = 'text-foreground';
           let badgeTextClass = 'text-foreground';
@@ -242,6 +366,14 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
 
           const nonInfoIssuesCount = (result.issues || []).filter(issue => issue.type === 'error' || issue.type === 'warning').length;
           const onlyInfoIssuesExist = (result.issues || []).length > 0 && nonInfoIssuesCount === 0;
+          
+          const previewWithInjectedCode = result.preview ? {
+            ...result.preview,
+            processedHtml: previewState.controlsEnabled
+              ? result.preview.processedHtml + getGsapControlsInjection()
+              : result.preview.processedHtml,
+            id: `${result.preview.id}-${previewState.refreshKey}-${previewState.controlsEnabled}`
+          } : null;
 
           return (
             <Card key={result.id} className="shadow-lg overflow-hidden mb-8" data-report-card="true">
@@ -251,7 +383,7 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
                   <CardDescription className={`text-xs ${headerTextClass} opacity-80`}>Validation Status</CardDescription>
                 </div>
                 <div className="flex items-center gap-2" data-exclude-from-pdf="true">
-                    {result.preview?.previewSrc && (
+                    {previewWithInjectedCode && (
                         <Dialog>
                             <DialogTrigger asChild>
                                 <Button variant="secondary" size="sm" className="h-8">
@@ -261,12 +393,20 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
                             <DialogContent className="max-w-4xl h-[80vh] flex flex-col p-0">
                                 <DialogHeader className="p-4 border-b">
                                     <DialogTitle>Live Preview: {result.fileName}</DialogTitle>
-                                    <DialogDescription className="text-left">
-                                        This is a sandboxed preview. Some functionality may differ from the final environment.
+                                    <DialogDescription className="text-left flex justify-between items-center">
+                                        <span>This is a sandboxed preview. Some functionality may differ from the final environment.</span>
+                                        <div className="flex items-center space-x-2">
+                                            <Switch
+                                                id={`controls-switch-${result.id}`}
+                                                checked={previewState.controlsEnabled}
+                                                onCheckedChange={() => handleToggleControls(result.id)}
+                                            />
+                                            <Label htmlFor={`controls-switch-${result.id}`} className="text-xs">Animation Controls</Label>
+                                        </div>
                                     </DialogDescription>
                                 </DialogHeader>
                                 <div className="flex-grow overflow-auto">
-                                   <BannerPreview result={result.preview} />
+                                   <BannerPreview result={previewWithInjectedCode} onRefresh={() => handleRefresh(result.id)} />
                                 </div>
                             </DialogContent>
                         </Dialog>

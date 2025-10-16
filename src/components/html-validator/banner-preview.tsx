@@ -1,7 +1,6 @@
-
 "use client";
 
-import React, { useState } from 'react';
+import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { RefreshCw, ShieldAlert } from 'lucide-react';
@@ -9,14 +8,10 @@ import type { PreviewResult } from '@/types';
 
 interface BannerPreviewProps {
   result: PreviewResult;
+  onRefresh: () => void;
 }
 
-export function BannerPreview({ result }: BannerPreviewProps) {
-  const [refreshKey, setRefreshKey] = useState(0);
-
-  const handleRefresh = () => {
-    setRefreshKey(prevKey => prevKey + 1);
-  };
+export function BannerPreview({ result, onRefresh }: BannerPreviewProps) {
   
   return (
     <Card className="shadow-none border-0 h-full flex flex-col">
@@ -30,7 +25,7 @@ export function BannerPreview({ result }: BannerPreviewProps) {
                     A sandboxed preview of your creative.
                 </CardDescription>
             </div>
-            <Button variant="outline" size="icon" onClick={handleRefresh} title="Refresh Preview">
+            <Button variant="outline" size="icon" onClick={onRefresh} title="Refresh Preview">
                 <RefreshCw className="h-4 w-4" />
             </Button>
         </div>
@@ -47,8 +42,8 @@ export function BannerPreview({ result }: BannerPreviewProps) {
         )}
         <div className="relative w-full flex-grow bg-muted/30 rounded-lg overflow-hidden border">
            <iframe
-              key={`${result.id}-${refreshKey}`}
-              src={result.previewSrc}
+              key={result.id}
+              srcDoc={result.processedHtml}
               sandbox="allow-scripts allow-same-origin"
               className="w-full h-full border-0"
               title={`Preview of ${result.fileName}`}
