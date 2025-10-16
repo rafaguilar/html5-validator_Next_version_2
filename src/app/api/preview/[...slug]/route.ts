@@ -136,16 +136,15 @@ export async function GET(
   request: NextRequest,
   { params }: { params: { slug: string[] } }
 ) {
-  const [previewIdWithParams, ...filePathParts] = params.slug;
+  const [previewId, ...filePathParts] = params.slug;
   const relativePath = filePathParts.join('/');
 
-  if (!previewIdWithParams || !relativePath) {
+  if (!previewId || !relativePath) {
     return new NextResponse('Invalid request', { status: 400 });
   }
 
   const url = new URL(request.url);
   const controlsEnabled = url.searchParams.get('enabled') === 'true';
-  const previewId = previewIdWithParams.split('?')[0];
   
   const fileData = await getFile(previewId, relativePath, controlsEnabled);
 

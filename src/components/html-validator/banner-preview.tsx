@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { RefreshCw, ShieldAlert, Loader2 } from 'lucide-react';
@@ -9,19 +9,19 @@ import type { PreviewResult } from '@/types';
 interface BannerPreviewProps {
   result: PreviewResult;
   onRefresh: () => void;
+  controlsEnabled: boolean;
 }
 
-export function BannerPreview({ result, onRefresh }: BannerPreviewProps) {
+export function BannerPreview({ result, onRefresh, controlsEnabled }: BannerPreviewProps) {
   const [isLoading, setIsLoading] = useState(true);
 
-  // By changing the key, we force the iframe to unmount and remount, triggering a full reload
-  const iframeKey = `${result.id}-${result.fileName}`;
+  const iframeKey = useMemo(() => `${result.id}-${Date.now()}`, [result.id, onRefresh]); // Key changes on refresh trigger
 
   const handleLoad = () => {
     setIsLoading(false);
   };
   
-  const previewSrc = `/api/preview/${result.id}/${result.entryPoint}`;
+  const previewSrc = `/api/preview/${result.id}/${result.entryPoint}?enabled=${controlsEnabled}`;
 
   return (
     <Card className="shadow-none border-0 h-full flex flex-col">

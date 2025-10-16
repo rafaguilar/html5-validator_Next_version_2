@@ -29,7 +29,7 @@ export async function saveReport(reportData: ValidationResult[]): Promise<string
     const serializableReportData: SerializableValidationResult[] = reportData.map(result => {
         const { preview, ...rest } = result;
         const serializablePreview = preview ? {
-            id: preview.id.split('-')[0], // Remove refresh/control keys from id before saving
+            id: preview.id, // Keep the original ID
             fileName: preview.fileName,
             entryPoint: preview.entryPoint,
             processedHtml: preview.processedHtml || null,

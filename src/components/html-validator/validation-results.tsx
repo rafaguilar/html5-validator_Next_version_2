@@ -107,7 +107,7 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
   const handleToggleControls = (resultId: string) => {
     setPreviewsState(prevState => ({
       ...prevState,
-      [resultId]: { ...prevState[resultId], controlsEnabled: !prevState[resultId]?.controlsEnabled },
+      [resultId]: { ...prevState[resultId], controlsEnabled: !prevState[resultId]?.controlsEnabled, refreshKey: Date.now() },
     }));
   };
 
@@ -273,11 +273,6 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
 
           const nonInfoIssuesCount = (result.issues || []).filter(issue => issue.type === 'error' || issue.type === 'warning').length;
           const onlyInfoIssuesExist = (result.issues || []).length > 0 && nonInfoIssuesCount === 0;
-          
-          const previewForBanner = result.preview ? {
-            ...result.preview,
-            id: `${result.preview.id}?enabled=${previewState.controlsEnabled}&refresh=${previewState.refreshKey}`
-          } : null;
 
           return (
             <Card key={result.id} className="shadow-lg overflow-hidden mb-8" data-report-card="true">
@@ -287,7 +282,7 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
                   <CardDescription className={`text-xs ${headerTextClass} opacity-80`}>Validation Status</CardDescription>
                 </div>
                 <div className="flex items-center gap-2" data-exclude-from-pdf="true">
-                    {previewForBanner && (
+                    {result.preview && (
                         <Dialog>
                             <DialogTrigger asChild>
                                 <Button variant="secondary" size="sm" className="h-8">
@@ -312,7 +307,7 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
                                     </DialogDescription>
                                 </DialogHeader>
                                 <div className="flex-grow overflow-auto">
-                                   <BannerPreview result={previewForBanner} onRefresh={() => handleRefresh(result.id)} />
+                                   <BannerPreview result={result.preview} onRefresh={() => handleRefresh(result.id)} controlsEnabled={previewState.controlsEnabled} />
                                 </div>
                             </DialogContent>
                         </Dialog>
