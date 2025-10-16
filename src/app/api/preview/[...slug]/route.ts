@@ -25,34 +25,44 @@ async function getFile(id: string, filePath: string, bannerId: string | null): P
       return undefined; // Expired
     }
   
-    // Add retry logic for file system propagation delay
     for (let i = 0; i < 3; i++) {
         try {
             let buffer = await fs.readFile(fullPath);
             const contentType = mime.lookup(filePath) || 'application/octet-stream';
             
-            // If it's the main HTML file, inject the controller script
-            if (contentType === 'text/html' && bannerId) {
-                const originalHtml = buffer.toString('utf-8');
-                const controllerScript = await getGsapControllerScript();
-                const scriptTag = `<script data-studio-id="gsap-controller" data-banner-id="${bannerId}">${controllerScript}</script>`;
-                const modifiedHtml = originalHtml.replace('</head>', `${scriptTag}</head>`);
-                buffer = Buffer.from(modifiedHtml, 'utf-8');
+            if (contentType === 'text/html') {
+                let originalHtml = buffer.toString('utf-8');
+                
+                // 1. Inject the base tag to fix relative asset paths
+                const basePath = `/api/preview/${id}/${path.dirname(filePath)}/`;
+                const baseTag = `<base href="${basePath}">`;
+                if (!originalHtml.includes('<base href')) {
+                    originalHtml = originalHtml.replace('<head>', `<head>\n    ${baseTag}`);
+                }
+                
+                // 2. Inject the GSAP controller script if bannerId is present
+                if (bannerId) {
+                    const controllerScript = await getGsapControllerScript();
+                    const scriptTag = `<script data-studio-id="gsap-controller" data-banner-id="${bannerId}">${controllerScript}</script>`;
+                    if (!originalHtml.includes('data-studio-id="gsap-controller"')) {
+                         originalHtml = originalHtml.replace('</head>', `${scriptTag}\n</head>`);
+                    }
+                }
+                
+                buffer = Buffer.from(originalHtml, 'utf-8');
             }
 
             return { buffer, contentType };
         } catch (e: any) {
             if (e.code === 'ENOENT' && i < 2) {
-                // File not found, wait and retry
-                await new Promise(resolve => setTimeout(resolve, 150)); // Wait 150ms
+                await new Promise(resolve => setTimeout(resolve, 150));
             } else if (e.code !== 'ENOENT') {
-                 // Log non-ENOENT errors but don't re-throw to avoid crashing the function
                  console.error(`[preview.get] Error reading file (attempt ${i+1}):`, e);
                  return undefined;
             }
         }
     }
-    return undefined; // Return undefined after all retries fail
+    return undefined;
   } catch (error: any) {
     if (error.code !== 'ENOENT') {
         console.error(`[preview.get] Critical error for preview ${id}/${filePath}:`, error);

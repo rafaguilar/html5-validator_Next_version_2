@@ -153,7 +153,7 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
   const handleRefresh = (resultId: string) => {
     setPreviewsState(prevState => ({
       ...prevState,
-      [resultId]: { ...(prevState[resultId] || { refreshKey: 0, isPlaying: false, canControl: null }), refreshKey: Date.now() },
+      [resultId]: { ...(prevState[resultId] || { refreshKey: 0, isPlaying: false, canControl: null }), canControl: null, refreshKey: Date.now() },
     }));
   };
 
@@ -350,7 +350,7 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
                                 </Button>
                             </DialogTrigger>
                             <DialogContent className="max-w-4xl h-[80vh] flex flex-col p-0">
-                                <DialogTitle className="sr-only">Live Preview: {result.fileName}</DialogTitle>
+                               <DialogTitle className="sr-only">Live Preview: {result.fileName}</DialogTitle>
                                 <BannerPreview
                                     key={`${result.id}-${previewState.refreshKey}`}
                                     result={result.preview}
@@ -479,5 +479,3 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
     </div>
   );
 }
-
-    
