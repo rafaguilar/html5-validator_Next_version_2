@@ -12,11 +12,11 @@ interface CachedFile {
   contentType: string;
 }
 
-const rewriteHtmlPaths = async (htmlContent: string, previewId: string, entryDir: string): Promise<string> => {
+const rewriteHtmlPaths = async (htmlContent: string, previewId: string): Promise<string> => {
     let processedHtml = htmlContent;
     const previewDir = path.join(TEMP_DIR, previewId);
-    
-    // Function to recursively get all file paths
+
+    // This function recursively finds all file paths in the directory
     const getFiles = async (dir: string): Promise<string[]> => {
         const dirents = await fs.readdir(dir, { withFileTypes: true });
         const files = await Promise.all(dirents.map((dirent) => {
@@ -27,23 +27,31 @@ const rewriteHtmlPaths = async (htmlContent: string, previewId: string, entryDir
     };
 
     try {
-        const allFiles = await getFiles(previewDir);
-        const relativeAssetPaths = allFiles.map(f => path.relative(previewDir, f));
+        const allFilePaths = await getFiles(previewDir);
+        // Create a list of asset paths relative to the preview directory root
+        const relativeAssetPaths = allFilePaths.map(f => path.relative(previewDir, f));
 
-        // Sort by length descending to replace "img/a.jpg" before "img/"
+        // Sort by length, descending. This is crucial.
+        // It ensures we replace "images/foo.jpg" before we replace "images/".
         relativeAssetPaths.sort((a, b) => b.length - a.length);
 
         for (const assetPath of relativeAssetPaths) {
-            // Don't rewrite the HTML file itself
-            if (assetPath.endsWith('.html')) continue;
-
-            const absolutePath = `/api/preview/${previewId}/${assetPath}`;
+            // We don't need to rewrite the HTML file itself.
+            if (assetPath.toLowerCase().endsWith('.html')) continue;
             
-            // Create regex to find the asset path in various attributes
-            // Handles src="asset.jpg", href='asset.jpg', url("asset.jpg") etc.
-            // It looks for paths that are not preceded by a scheme (http, https, data) or a slash
-            const regex = new RegExp(`(src|href|poster|data-src|xlink:href)=["'](?!https?:\/\/|data:|\\/)${assetPath}["']`, 'g');
-            processedHtml = processedHtml.replace(regex, `$1="${absolutePath}"`);
+            // The absolute path the browser will use to fetch the asset
+            const absoluteUrl = `/api/preview/${previewId}/${assetPath}`;
+
+            // Create a very broad but effective regex to find relative paths.
+            // This looks for src="...", href='...', or url(...) that is NOT preceded
+            // by 'http', 'https', 'data:', or a leading '/'.
+            // This is more robust than just replacing the assetPath string.
+            const regex = new RegExp(`(src|href|poster|data-src|xlink:href)=["'](?!https?://|data:|//|/)${assetPath}["']`, 'g');
+            processedHtml = processedHtml.replace(regex, `$1="${absoluteUrl}"`);
+
+            // Add a regex for CSS `url()` function calls
+            const cssUrlRegex = new RegExp(`url\\(["']?(?!https?://|data:|//|/)${assetPath}["']?\\)`, 'g');
+            processedHtml = processedHtml.replace(cssUrlRegex, `url(${absoluteUrl})`);
         }
     } catch(e) {
         console.error("[Path Rewrite] Failed to rewrite paths, previews may be broken.", e);
@@ -51,7 +59,6 @@ const rewriteHtmlPaths = async (htmlContent: string, previewId: string, entryDir
     
     return processedHtml;
 };
-
 
 async function getFile(id: string, filePath: string, bannerId: string | null): Promise<CachedFile | undefined> {
   const previewDir = path.join(TEMP_DIR, id);
@@ -74,9 +81,8 @@ async function getFile(id: string, filePath: string, bannerId: string | null): P
             if (contentType === 'text/html') {
                 let originalHtml = buffer.toString('utf-8');
                 
-                // 1. Rewrite asset paths to be absolute
-                const entryDir = path.dirname(filePath);
-                originalHtml = await rewriteHtmlPaths(originalHtml, id, entryDir);
+                // 1. Aggressively rewrite all relative asset paths to be absolute
+                originalHtml = await rewriteHtmlPaths(originalHtml, id);
                 
                 // 2. Inject the GSAP controller script if bannerId is present
                 if (bannerId) {
