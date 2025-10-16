@@ -15,8 +15,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { BannerPreview } from './banner-preview';
 import { useToast } from '@/hooks/use-toast';
 import { saveReport } from '@/services/report-service';
-import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 
 
 interface ValidationResultsProps {
@@ -82,14 +80,15 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
   const [isSharing, setIsSharing] = React.useState(false);
   const { toast } = useToast();
   
-  const [previewsState, setPreviewsState] = React.useState<Record<string, { refreshKey: number; controlsEnabled: boolean }>>({});
+  const [previewsState, setPreviewsState] = React.useState<Record<string, { refreshKey: number; isPlaying: boolean; canControl: boolean | null; }>>({});
+  const iframeRefs = React.useRef<Record<string, HTMLIFrameElement | null>>({});
 
   React.useEffect(() => {
     // Initialize state for new results
-    const newStates: Record<string, { refreshKey: number; controlsEnabled: boolean }> = {};
+    const newStates: Record<string, { refreshKey: number; isPlaying: boolean; canControl: boolean | null }> = {};
     results.forEach(result => {
-      if (!previewsState[result.id]) {
-        newStates[result.id] = { refreshKey: Date.now(), controlsEnabled: false };
+      if (!previewsState[result.id] && result.preview) {
+        newStates[result.id] = { refreshKey: Date.now(), isPlaying: false, canControl: null };
       }
     });
     if (Object.keys(newStates).length > 0) {
@@ -97,18 +96,57 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
     }
   }, [results, previewsState]);
 
+  React.useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      const { bannerId, status, isPlaying, canControl, error } = event.data;
+
+      if (!bannerId || !previewsState[bannerId]) return;
+
+      if (status === 'ready') {
+         setPreviewsState(prevState => ({
+          ...prevState,
+          [bannerId]: { ...prevState[bannerId], canControl, isPlaying },
+        }));
+        // Auto-pause on load
+        iframeRefs.current[bannerId]?.contentWindow?.postMessage({ action: 'pause', bannerId }, '*');
+      } else if (status === 'playPauseSuccess') {
+         setPreviewsState(prevState => ({
+          ...prevState,
+          [bannerId]: { ...prevState[bannerId], isPlaying },
+        }));
+      } else if (status === 'playPauseFailed') {
+        console.warn(`[Player Control] Failed for ${bannerId}:`, error);
+        toast({
+            title: "Animation Control Failed",
+            description: "Could not find a controllable GSAP timeline in this creative.",
+            variant: "destructive"
+        });
+        setPreviewsState(prevState => ({
+          ...prevState,
+          [bannerId]: { ...prevState[bannerId], canControl: false },
+        }));
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => {
+      window.removeEventListener('message', handleMessage);
+    };
+  }, [previewsState, toast]);
+
   const handleRefresh = (resultId: string) => {
     setPreviewsState(prevState => ({
       ...prevState,
-      [resultId]: { ...prevState[resultId], refreshKey: Date.now() },
+      [resultId]: { ...prevState[resultId], refreshKey: Date.now(), isPlaying: false, canControl: null },
     }));
   };
 
-  const handleToggleControls = (resultId: string) => {
-    setPreviewsState(prevState => ({
-      ...prevState,
-      [resultId]: { ...prevState[resultId], controlsEnabled: !prevState[resultId]?.controlsEnabled, refreshKey: Date.now() },
-    }));
+  const handleTogglePlay = (resultId: string) => {
+    const iframe = iframeRefs.current[resultId];
+    if (!iframe || !iframe.contentWindow) return;
+    const currentState = previewsState[resultId];
+    const action = currentState.isPlaying ? 'pause' : 'play';
+    iframe.contentWindow.postMessage({ action, bannerId: resultId }, '*');
   };
 
   const handleDownloadPdf = async () => {
@@ -237,7 +275,7 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
       <div ref={reportRef}>
         {(results || []).map(result => {
           
-          const previewState = previewsState[result.id] || { refreshKey: Date.now(), controlsEnabled: false };
+          const previewState = previewsState[result.id] || { refreshKey: Date.now(), isPlaying: false, canControl: null };
 
           let headerBgClass = 'bg-muted/30';
           let headerTextClass = 'text-foreground';
@@ -290,24 +328,27 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
                                 </Button>
                             </DialogTrigger>
                             <DialogContent className="max-w-4xl h-[80vh] flex flex-col p-0">
-                                <DialogHeader className="p-4 border-b">
+                                <DialogHeader className="p-4 border-b flex-row items-center justify-between">
+                                  <div>
                                     <DialogTitle>Live Preview: {result.fileName}</DialogTitle>
-                                    <DialogDescription asChild>
-                                      <div className="text-sm text-muted-foreground text-left flex justify-between items-center">
-                                          <span>This is a sandboxed preview. Some functionality may differ from the final environment.</span>
-                                          <div className="flex items-center space-x-2">
-                                              <Switch
-                                                  id={`controls-switch-${result.id}`}
-                                                  checked={previewState.controlsEnabled}
-                                                  onCheckedChange={() => handleToggleControls(result.id)}
-                                              />
-                                              <Label htmlFor={`controls-switch-${result.id}`} className="text-xs">Animation Controls</Label>
-                                          </div>
-                                      </div>
+                                    <DialogDescription>
+                                        This is a sandboxed preview.
                                     </DialogDescription>
+                                  </div>
+                                  {previewState.canControl && (
+                                      <Button variant="outline" size="sm" onClick={() => handleTogglePlay(result.id)}>
+                                          {previewState.isPlaying ? <Pause className="w-4 h-4 mr-2" /> : <Play className="w-4 h-4 mr-2" />}
+                                          {previewState.isPlaying ? 'Pause' : 'Play'}
+                                      </Button>
+                                  )}
                                 </DialogHeader>
                                 <div className="flex-grow overflow-auto">
-                                   <BannerPreview result={result.preview} onRefresh={() => handleRefresh(result.id)} controlsEnabled={previewState.controlsEnabled} />
+                                   <BannerPreview
+                                      key={previewState.refreshKey}
+                                      result={result.preview}
+                                      onRefresh={() => handleRefresh(result.id)}
+                                      setIframeRef={(el) => (iframeRefs.current[result.id] = el)}
+                                   />
                                 </div>
                             </DialogContent>
                         </Dialog>

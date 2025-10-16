@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { RefreshCw, ShieldAlert, Loader2 } from 'lucide-react';
@@ -9,19 +9,27 @@ import type { PreviewResult } from '@/types';
 interface BannerPreviewProps {
   result: PreviewResult;
   onRefresh: () => void;
-  controlsEnabled: boolean;
+  setIframeRef: (el: HTMLIFrameElement | null) => void;
 }
 
-export function BannerPreview({ result, onRefresh, controlsEnabled }: BannerPreviewProps) {
+export function BannerPreview({ result, onRefresh, setIframeRef }: BannerPreviewProps) {
   const [isLoading, setIsLoading] = useState(true);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
-  const iframeKey = useMemo(() => `${result.id}-${Date.now()}`, [result.id, onRefresh]); // Key changes on refresh trigger
-
+  useEffect(() => {
+    setIframeRef(iframeRef.current);
+  }, [setIframeRef]);
+  
   const handleLoad = () => {
     setIsLoading(false);
+    if (iframeRef.current?.contentWindow) {
+      // Let the parent know the iframe is ready to be controlled
+      iframeRef.current.contentWindow.postMessage({ action: 'init', bannerId: result.id }, '*');
+    }
   };
   
-  const previewSrc = `/api/preview/${result.id}/${result.entryPoint}?enabled=${controlsEnabled}`;
+  // Always append bannerId to ensure the controller script knows its ID
+  const previewSrc = `/api/preview/${result.id}/${result.entryPoint}?bannerId=${result.id}`;
 
   return (
     <Card className="shadow-none border-0 h-full flex flex-col">
@@ -52,13 +60,13 @@ export function BannerPreview({ result, onRefresh, controlsEnabled }: BannerPrev
         )}
         <div className="relative w-full flex-grow bg-muted/30 rounded-lg overflow-hidden border">
            {isLoading && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-800 bg-opacity-90 z-10 text-white">
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-background z-10 text-foreground">
                   <Loader2 className="w-10 h-10 animate-spin mb-4" />
                   <span className="text-lg">Loading Banner...</span>
               </div>
             )}
            <iframe
-              key={iframeKey}
+              ref={iframeRef}
               src={previewSrc}
               sandbox="allow-scripts allow-same-origin"
               className="w-full h-full border-0"
