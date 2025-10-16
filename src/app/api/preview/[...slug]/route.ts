@@ -1,3 +1,4 @@
+
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
@@ -24,6 +25,7 @@ const getGsapControlsInjection = () => {
 
                 function exportAndPause() {
                     try {
+                        // Check for a running root timeline before exporting
                         if (gsap && typeof gsap.exportRoot === 'function') {
                            globalTimeline = gsap.exportRoot();
                         } else if (typeof TimelineLite.exportRoot === 'function') {
@@ -33,13 +35,15 @@ const getGsapControlsInjection = () => {
                             return;
                         }
 
-                        globalTimeline.pause();
-                        
-                        var playBtn = document.getElementById('studio-play-btn');
-                        if (playBtn) playBtn.style.display = 'block';
+                        if (globalTimeline) {
+                            globalTimeline.pause();
+                            
+                            var playBtn = document.getElementById('studio-play-btn');
+                            var pauseBtn = document.getElementById('studio-pause-btn');
 
-                        var pauseBtn = document.getElementById('studio-pause-btn');
-                        if (pauseBtn) pauseBtn.style.display = 'none';
+                            if (playBtn) playBtn.style.display = 'block';
+                            if (pauseBtn) pauseBtn.style.display = 'none';
+                        }
 
                     } catch(e) {
                         console.error('Error exporting GSAP root timeline:', e);
@@ -48,8 +52,8 @@ const getGsapControlsInjection = () => {
                 
                 var style = document.createElement('style');
                 style.innerHTML = \`
-                    #studio-controls { position: absolute; top: 5px; right: 5px; z-index: 99999; display: flex; gap: 5px; }
-                    .studio-btn { width: 32px; height: 32px; background: rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.4); border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; color: white; }
+                    #studio-controls { position: absolute; top: 5px; right: 5px; z-index: 999999 !important; display: flex; gap: 5px; }
+                    .studio-btn { width: 32px; height: 32px; background: rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.4); border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; color: white; padding: 0; }
                     .studio-btn:hover { background: rgba(0,0,0,0.8); }
                     .studio-btn svg { width: 16px; height: 16px; }
                 \`;
@@ -69,7 +73,7 @@ const getGsapControlsInjection = () => {
                 playBtn.id = 'studio-play-btn';
                 playBtn.className = 'studio-btn';
                 playBtn.title = 'Play';
-                playBtn.style.display = 'none';
+                playBtn.style.display = 'none'; // Initially hidden
                 playBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>';
                 playBtn.onclick = function() {
                     if (globalTimeline) {
@@ -83,7 +87,7 @@ const getGsapControlsInjection = () => {
                 controlsContainer.appendChild(playBtn);
                 document.body.appendChild(controlsContainer);
                 
-                // Automatically pause on load
+                // Automatically pause on load after a short delay to allow animations to start
                 setTimeout(exportAndPause, 100);
             });
         </script>
@@ -146,7 +150,10 @@ export async function GET(
   const url = new URL(request.url);
   const controlsEnabled = url.searchParams.get('enabled') === 'true';
   
-  const fileData = await getFile(previewId, relativePath, controlsEnabled);
+  // Sanitize the previewId to remove any query params that might have been accidentally included
+  const cleanPreviewId = previewId.split('?')[0];
+
+  const fileData = await getFile(cleanPreviewId, relativePath, controlsEnabled);
 
   if (!fileData) {
     return new NextResponse(`Preview asset not found or expired: /${relativePath}`, { 
