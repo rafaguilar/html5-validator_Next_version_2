@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { CheckCircle2, XCircle, AlertTriangle, FileText, Image as ImageIconLucide, Archive, LinkIcon, Download, Loader2, Info, MonitorPlay, Code2, Share2, Play, Pause, RefreshCw } from 'lucide-react';
+import { CheckCircle2, XCircle, AlertTriangle, FileText, Image as ImageIconLucide, Archive, LinkIcon, Download, Loader2, Info, MonitorPlay, Code2, Share2, Play, Pause } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
 import { BannerPreview } from './banner-preview';
@@ -350,31 +350,19 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
                                 </Button>
                             </DialogTrigger>
                             <DialogContent className="max-w-4xl h-[80vh] flex flex-col p-0">
-                                <DialogTitle className="sr-only">Banner Preview: {result.fileName}</DialogTitle>
+                                <DialogTitle className="sr-only">Live Preview: {result.fileName}</DialogTitle>
                                 <BannerPreview
                                     key={`${result.id}-${previewState.refreshKey}`}
                                     result={result.preview}
-                                    onRefresh={() => handleRefresh(result.id)}
                                     setIframeRef={(el) => (iframeRefs.current[result.id] = el)}
+                                    onRefresh={() => handleRefresh(result.id)}
+                                    onTogglePlay={() => handleTogglePlay(result.id)}
+                                    isPlaying={previewState.isPlaying}
+                                    canControl={previewState.canControl}
                                 />
                             </DialogContent>
                         </Dialog>
                     )}
-                    {previewState.canControl === true && (
-                       <Button variant="outline" size="sm" className="h-8 text-foreground" onClick={() => handleTogglePlay(result.id)}>
-                            {previewState.isPlaying ? <Pause className="w-4 h-4 mr-2" /> : <Play className="w-4 h-4 mr-2" />}
-                            {previewState.isPlaying ? 'Pause' : 'Play'}
-                        </Button>
-                    )}
-                     {previewState.canControl === null && result.status !== 'pending' && (
-                        <Button variant="outline" size="sm" className="h-8 text-foreground" disabled>
-                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                            Controls
-                        </Button>
-                    )}
-                    <Button variant="outline" size="icon" className="h-8 w-8 text-foreground" onClick={() => handleRefresh(result.id)} title="Refresh Preview">
-                        <RefreshCw className="w-4 h-4" />
-                    </Button>
                     {result.htmlContent && (
                        <Dialog>
                             <DialogTrigger asChild>

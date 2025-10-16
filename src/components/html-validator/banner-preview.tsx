@@ -1,22 +1,32 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from 'react';
+import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { RefreshCw, ShieldAlert, Loader2 } from 'lucide-react';
+import { RefreshCw, ShieldAlert, Play, Pause, Loader2 } from 'lucide-react';
 import type { PreviewResult } from '@/types';
 
 interface BannerPreviewProps {
   result: PreviewResult;
   onRefresh: () => void;
   setIframeRef: (el: HTMLIFrameElement | null) => void;
+  onTogglePlay: () => void;
+  isPlaying: boolean;
+  canControl: boolean | null;
 }
 
-export function BannerPreview({ result, onRefresh, setIframeRef }: BannerPreviewProps) {
-  const [isLoading, setIsLoading] = useState(true);
-  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+export function BannerPreview({ 
+  result, 
+  onRefresh, 
+  setIframeRef,
+  onTogglePlay,
+  isPlaying,
+  canControl
+}: BannerPreviewProps) {
+  const [isLoading, setIsLoading] = React.useState(true);
+  const iframeRef = React.useRef<HTMLIFrameElement | null>(null);
 
-  useEffect(() => {
+  React.useEffect(() => {
     // Pass the ref up to the parent component
     if (iframeRef.current) {
       setIframeRef(iframeRef.current);
@@ -36,15 +46,29 @@ export function BannerPreview({ result, onRefresh, setIframeRef }: BannerPreview
         <div className="flex justify-between items-start">
             <div>
                 <CardTitle className="text-xl flex items-center gap-2">
-                    Live Preview
+                    Live Preview: {result.fileName}
                 </CardTitle>
                 <CardDescription>
                     A sandboxed preview of your creative.
                 </CardDescription>
             </div>
-            <Button variant="outline" size="icon" onClick={() => { setIsLoading(true); onRefresh(); }} title="Refresh Preview">
-                <RefreshCw className="h-4 w-4" />
-            </Button>
+            <div className="flex items-center gap-2">
+              {canControl === true && (
+                <Button variant="outline" size="sm" className="h-8" onClick={onTogglePlay}>
+                    {isPlaying ? <Pause className="w-4 h-4 mr-2" /> : <Play className="w-4 h-4 mr-2" />}
+                    {isPlaying ? 'Pause' : 'Play'}
+                </Button>
+              )}
+              {canControl === null && (
+                  <Button variant="outline" size="sm" className="h-8 text-foreground" disabled>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Controls
+                  </Button>
+              )}
+              <Button variant="outline" size="icon" onClick={() => { setIsLoading(true); onRefresh(); }} title="Refresh Preview">
+                  <RefreshCw className="h-4 w-4" />
+              </Button>
+            </div>
         </div>
       </CardHeader>
       <CardContent className="flex-grow flex flex-col gap-4">
