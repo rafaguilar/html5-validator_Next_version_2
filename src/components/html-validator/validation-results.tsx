@@ -99,27 +99,36 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
     const handleMessage = (event: MessageEvent) => {
         const { bannerId, status, isPlaying, canControl, error } = event.data;
         
-        const resultExists = results.some(r => r.id === bannerId);
+        const resultExists = results.some(r => r.preview?.id === bannerId);
         if (!bannerId || !resultExists) {
             return;
         }
+        
+        // Find the full result ID associated with the previewId
+        const fullResultId = results.find(r => r.preview?.id === bannerId)?.id;
+        if (!fullResultId) return;
 
-        const currentBannerState = previewsState[bannerId];
+        const currentBannerState = previewsState[fullResultId];
         if (!currentBannerState) return;
         
         if (status === 'ready') {
             setPreviewsState(prevState => ({
                 ...prevState,
-                [bannerId]: { ...prevState[bannerId], canControl: canControl, isPlaying: isPlaying },
+                [fullResultId]: { ...prevState[fullResultId], canControl: canControl, isPlaying: isPlaying },
             }));
             if (canControl) {
                 // Auto-pause on load, but only if we have control
-                iframeRefs.current[bannerId]?.contentWindow?.postMessage({ action: 'pause', bannerId }, '*');
+                iframeRefs.current[fullResultId]?.contentWindow?.postMessage({ action: 'pause', bannerId }, '*');
+            } else if (canControl === false) {
+                 toast({
+                    title: "Animation Not Controllable",
+                    description: "A GSAP timeline was not found in this creative.",
+                });
             }
         } else if (status === 'playPauseSuccess') {
             setPreviewsState(prevState => ({
                 ...prevState,
-                [bannerId]: { ...prevState[bannerId], isPlaying: isPlaying },
+                [fullResultId]: { ...prevState[fullResultId], isPlaying: isPlaying },
             }));
         } else if (status === 'playPauseFailed') {
             console.warn(`[Player Control] Failed for ${bannerId}:`, error);
@@ -130,7 +139,7 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
             });
             setPreviewsState(prevState => ({
                 ...prevState,
-                [bannerId]: { ...prevState[bannerId], canControl: false },
+                [fullResultId]: { ...prevState[fullResultId], canControl: false },
             }));
         }
     };
@@ -154,8 +163,12 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
     const currentState = previewsState[resultId];
     if (currentState.canControl !== true) return;
 
+    // We need the preview ID to send to the iframe
+    const previewId = results.find(r => r.id === resultId)?.preview?.id;
+    if (!previewId) return;
+    
     const action = currentState.isPlaying ? 'pause' : 'play';
-    iframe.contentWindow.postMessage({ action, bannerId: resultId }, '*');
+    iframe.contentWindow.postMessage({ action, bannerId: previewId }, '*');
   };
 
   const handleDownloadPdf = async () => {
@@ -337,6 +350,7 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
                                 </Button>
                             </DialogTrigger>
                             <DialogContent className="max-w-4xl h-[80vh] flex flex-col p-0">
+                                <DialogTitle className="sr-only">Banner Preview: {result.fileName}</DialogTitle>
                                 <BannerPreview
                                     key={`${result.id}-${previewState.refreshKey}`}
                                     result={result.preview}
@@ -346,13 +360,19 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
                             </DialogContent>
                         </Dialog>
                     )}
-                    {previewState.canControl && (
+                    {previewState.canControl === true && (
                        <Button variant="outline" size="sm" className="h-8 text-foreground" onClick={() => handleTogglePlay(result.id)}>
                             {previewState.isPlaying ? <Pause className="w-4 h-4 mr-2" /> : <Play className="w-4 h-4 mr-2" />}
                             {previewState.isPlaying ? 'Pause' : 'Play'}
                         </Button>
                     )}
-                    <Button variant="outline" size="icon" className="h-8 w-8 text-foreground" onClick={() => handleRefresh(result.id)}>
+                     {previewState.canControl === null && result.status !== 'pending' && (
+                        <Button variant="outline" size="sm" className="h-8 text-foreground" disabled>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Controls
+                        </Button>
+                    )}
+                    <Button variant="outline" size="icon" className="h-8 w-8 text-foreground" onClick={() => handleRefresh(result.id)} title="Refresh Preview">
                         <RefreshCw className="w-4 h-4" />
                     </Button>
                     {result.htmlContent && (
@@ -471,3 +491,5 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
     </div>
   );
 }
+
+    
