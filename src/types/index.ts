@@ -32,6 +32,6 @@ export interface PreviewResult {
   id: string;
   fileName: string;
   entryPoint: string;
-  processedHtml: string;
+  processedHtml: string | null; // Can be null as it's not essential for the new preview method
   securityWarning: string | null;
 }

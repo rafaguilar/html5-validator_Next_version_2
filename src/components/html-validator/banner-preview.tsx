@@ -1,9 +1,9 @@
 "use client";
 
-import React from 'react';
+import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { RefreshCw, ShieldAlert } from 'lucide-react';
+import { RefreshCw, ShieldAlert, Loader2 } from 'lucide-react';
 import type { PreviewResult } from '@/types';
 
 interface BannerPreviewProps {
@@ -12,7 +12,17 @@ interface BannerPreviewProps {
 }
 
 export function BannerPreview({ result, onRefresh }: BannerPreviewProps) {
+  const [isLoading, setIsLoading] = useState(true);
+
+  // By changing the key, we force the iframe to unmount and remount, triggering a full reload
+  const iframeKey = `${result.id}-${result.fileName}`;
+
+  const handleLoad = () => {
+    setIsLoading(false);
+  };
   
+  const previewSrc = `/api/preview/${result.id}/${result.entryPoint}`;
+
   return (
     <Card className="shadow-none border-0 h-full flex flex-col">
       <CardHeader className="flex-shrink-0">
@@ -25,7 +35,7 @@ export function BannerPreview({ result, onRefresh }: BannerPreviewProps) {
                     A sandboxed preview of your creative.
                 </CardDescription>
             </div>
-            <Button variant="outline" size="icon" onClick={onRefresh} title="Refresh Preview">
+            <Button variant="outline" size="icon" onClick={() => { setIsLoading(true); onRefresh(); }} title="Refresh Preview">
                 <RefreshCw className="h-4 w-4" />
             </Button>
         </div>
@@ -41,12 +51,19 @@ export function BannerPreview({ result, onRefresh }: BannerPreviewProps) {
           </div>
         )}
         <div className="relative w-full flex-grow bg-muted/30 rounded-lg overflow-hidden border">
+           {isLoading && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-800 bg-opacity-90 z-10 text-white">
+                  <Loader2 className="w-10 h-10 animate-spin mb-4" />
+                  <span className="text-lg">Loading Banner...</span>
+              </div>
+            )}
            <iframe
-              key={result.id}
-              srcDoc={result.processedHtml}
+              key={iframeKey}
+              src={previewSrc}
               sandbox="allow-scripts allow-same-origin"
               className="w-full h-full border-0"
               title={`Preview of ${result.fileName}`}
+              onLoad={handleLoad}
             />
         </div>
       </CardContent>
