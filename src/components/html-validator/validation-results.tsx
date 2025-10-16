@@ -393,16 +393,18 @@ export function ValidationResults({ results = [], isLoading }: ValidationResults
                             <DialogContent className="max-w-4xl h-[80vh] flex flex-col p-0">
                                 <DialogHeader className="p-4 border-b">
                                     <DialogTitle>Live Preview: {result.fileName}</DialogTitle>
-                                    <DialogDescription className="text-left flex justify-between items-center">
-                                        <span>This is a sandboxed preview. Some functionality may differ from the final environment.</span>
-                                        <div className="flex items-center space-x-2">
-                                            <Switch
-                                                id={`controls-switch-${result.id}`}
-                                                checked={previewState.controlsEnabled}
-                                                onCheckedChange={() => handleToggleControls(result.id)}
-                                            />
-                                            <Label htmlFor={`controls-switch-${result.id}`} className="text-xs">Animation Controls</Label>
-                                        </div>
+                                    <DialogDescription asChild>
+                                      <div className="text-sm text-muted-foreground text-left flex justify-between items-center">
+                                          <span>This is a sandboxed preview. Some functionality may differ from the final environment.</span>
+                                          <div className="flex items-center space-x-2">
+                                              <Switch
+                                                  id={`controls-switch-${result.id}`}
+                                                  checked={previewState.controlsEnabled}
+                                                  onCheckedChange={() => handleToggleControls(result.id)}
+                                              />
+                                              <Label htmlFor={`controls-switch-${result.id}`} className="text-xs">Animation Controls</Label>
+                                          </div>
+                                      </div>
                                     </DialogDescription>
                                 </DialogHeader>
                                 <div className="flex-grow overflow-auto">
