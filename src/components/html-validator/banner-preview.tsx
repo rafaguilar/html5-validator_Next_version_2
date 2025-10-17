@@ -37,8 +37,17 @@ export function BannerPreview({
     setIsLoading(false);
   };
   
-  // Always append bannerId to ensure the controller script knows its ID
-  const previewSrc = `/api/preview/${result.id}/${result.entryPoint}?bannerId=${result.id}`;
+  // The processedHtml now includes the <base> tag and the controller script.
+  const finalHtml = React.useMemo(() => {
+    if (!result.processedHtml) return '';
+    let html = result.processedHtml;
+    // The controller script must be injected here, as srcdoc creates a new, clean document.
+    const controllerScriptTag = `<script src="/api/gsap-controller.js" data-banner-id="${result.id}"></script>`;
+    if (!html.includes('data-banner-id')) {
+        html = html.replace('</head>', `${controllerScriptTag}\n</head>`);
+    }
+    return html;
+  }, [result.processedHtml, result.id]);
 
   return (
     <Card className="shadow-none border-0 h-full flex flex-col">
@@ -90,7 +99,7 @@ export function BannerPreview({
             )}
            <iframe
               ref={iframeRef}
-              src={previewSrc}
+              srcDoc={finalHtml}
               sandbox="allow-scripts allow-same-origin"
               className="w-full h-full border-0"
               title={`Preview of ${result.fileName}`}

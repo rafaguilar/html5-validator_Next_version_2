@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
 import mime from 'mime-types';
-import { getGsapControllerScript } from '@/lib/gsap-controller';
 
 const TEMP_DIR = '/tmp/html-validator-previews';
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
@@ -13,7 +12,7 @@ interface CachedFile {
 }
 
 // This function includes a retry mechanism for file system reads.
-async function getFile(id: string, filePath: string, bannerId: string | null): Promise<CachedFile | undefined> {
+async function getFile(id: string, filePath: string): Promise<CachedFile | undefined> {
   const previewDir = path.join(TEMP_DIR, id);
   const fullPath = path.join(previewDir, filePath);
 
@@ -35,23 +34,8 @@ async function getFile(id: string, filePath: string, bannerId: string | null): P
     // Add retry logic for file system propagation delay
     for (let i = 0; i < 3; i++) {
         try {
-            let buffer = await fs.readFile(fullPath);
+            const buffer = await fs.readFile(fullPath);
             const contentType = mime.lookup(filePath) || 'application/octet-stream';
-            
-            // If the file is an HTML file and a bannerId is present, inject the controller script.
-            if (contentType === 'text/html' && bannerId) {
-                let originalHtml = buffer.toString('utf-8');
-                const controllerScript = await getGsapControllerScript();
-                const scriptTag = `<script data-studio-id="gsap-controller" data-banner-id="${bannerId}">${controllerScript}</script>`;
-                
-                // Avoids injecting multiple times on refresh
-                if (!originalHtml.includes('data-studio-id="gsap-controller"')) {
-                     originalHtml = originalHtml.replace('</head>', `${scriptTag}\n</head>`);
-                }
-                
-                buffer = Buffer.from(originalHtml, 'utf-8');
-            }
-
             return { buffer, contentType };
         } catch (e: any) {
             if (e.code === 'ENOENT' && i < 2) {
@@ -80,10 +64,6 @@ export async function GET(
   request: NextRequest,
   { params }: { params: { slug: string[] } }
 ) {
-  const { searchParams } = new URL(request.url);
-  // The bannerId is passed as a query param to identify the specific preview instance.
-  const bannerId = searchParams.get('bannerId');
-
   const [previewId, ...filePathParts] = params.slug;
   // Re-join the path, ensuring it's properly decoded
   const relativePath = filePathParts.map(part => decodeURIComponent(part)).join('/');
@@ -92,7 +72,7 @@ export async function GET(
     return new NextResponse('Invalid request', { status: 400 });
   }
   
-  const fileData = await getFile(previewId, relativePath, bannerId);
+  const fileData = await getFile(previewId, relativePath);
 
   if (!fileData) {
     return new NextResponse(`Preview asset not found or expired: /${relativePath}`, { 

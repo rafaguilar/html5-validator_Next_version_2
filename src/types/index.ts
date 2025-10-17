@@ -20,7 +20,7 @@ export interface ValidationResult {
   adDimensions?: { width: number; height: number; actual?: {width: number; height: number} };
   fileStructureOk?: boolean;
   htmlEntryPoint?: string;
-  htmlContent?: string;
+  htmlContent?: string; // This will be the original HTML content
   detectedClickTags?: ClickTagInfo[];
   fileSize?: number;
   maxFileSize?: number;
@@ -32,6 +32,6 @@ export interface PreviewResult {
   id: string;
   fileName: string;
   entryPoint: string;
-  processedHtml: string | null; // Can be null as it's not essential for the new preview method
+  processedHtml: string | null; // This will now be the HTML string with the <base> tag, ready for srcdoc
   securityWarning: string | null;
 }

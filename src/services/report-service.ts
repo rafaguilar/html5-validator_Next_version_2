@@ -2,16 +2,15 @@
 
 import { db } from '@/lib/firebase';
 import { collection, addDoc, getDoc, doc } from 'firebase/firestore';
-import type { ValidationResult, PreviewResult } from '@/types';
+import type { ValidationResult } from '@/types';
+
 
 // We need a version of ValidationResult that is serializable for Firestore.
-// The 'preview' object contains non-serializable data in some cases.
 type SerializableValidationResult = Omit<ValidationResult, 'preview'> & {
     preview: {
         id: string;
         fileName: string;
         entryPoint: string;
-        // processedHtml is fine, securityWarning is fine
         processedHtml: string | null;
         securityWarning: string | null;
     } | null;
@@ -29,10 +28,10 @@ export async function saveReport(reportData: ValidationResult[]): Promise<string
     const serializableReportData: SerializableValidationResult[] = reportData.map(result => {
         const { preview, ...rest } = result;
         const serializablePreview = preview ? {
-            id: preview.id, // Keep the original ID
+            id: preview.id,
             fileName: preview.fileName,
             entryPoint: preview.entryPoint,
-            processedHtml: preview.processedHtml || null,
+            processedHtml: preview.processedHtml || null, // Already a string
             securityWarning: preview.securityWarning || null,
         } : null;
         
@@ -73,7 +72,10 @@ export async function getReport(id: string): Promise<ValidationResult[] | null> 
                 ...data,
                 createdAt: data.createdAt.toDate(),
             };
-            return report.results as ValidationResult[];
+            // The data from firestore is serializable, we need to cast it back to the full type
+            const results = report.results as SerializableValidationResult[];
+            return results as ValidationResult[];
+
         } else {
             console.log("No such document!");
             return null;

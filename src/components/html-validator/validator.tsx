@@ -64,12 +64,23 @@ export function Validator() {
             throw new Error(serverOutcome.error || 'Unknown error from process-file API');
         }
 
+        // The preview functionality depends on serverOutcome.previewId and serverOutcome.entryPoint
         if (serverOutcome.previewId && serverOutcome.entryPoint) {
+            
+            // To properly sandbox and handle relative paths, we'll create the srcDoc on the client
+            // using the HTML content we already have from `runClientSideValidation`.
+            let processedHtml = validationPart.htmlContent || '';
+            if (processedHtml) {
+                const baseHref = `/api/preview/${serverOutcome.previewId}/`;
+                const headWithBase = `<head><base href="${baseHref}" />`;
+                processedHtml = processedHtml.replace(/<head>/i, headWithBase);
+            }
+          
             previewResult = {
                 id: serverOutcome.previewId,
                 fileName: file.name,
                 entryPoint: serverOutcome.entryPoint,
-                processedHtml: validationPart.htmlContent || null, // No longer used for srcDoc, but good for reference
+                processedHtml: processedHtml, // This now contains the <base> tag
                 securityWarning: serverOutcome.securityWarning || null,
             };
             console.log(`[TRACE] Validator.tsx: Successfully created previewResult object for ${file.name}`);
