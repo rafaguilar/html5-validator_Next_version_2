@@ -32,6 +32,6 @@ export interface PreviewResult {
   id: string;
   fileName: string;
   entryPoint: string;
-  processedHtml: string | null; // This will now be the HTML string with the <base> tag, ready for srcdoc
+  processedHtml: string | null; // This is no longer used for the preview itself
   securityWarning: string | null;
 }

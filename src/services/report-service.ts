@@ -31,7 +31,7 @@ export async function saveReport(reportData: ValidationResult[]): Promise<string
             id: preview.id,
             fileName: preview.fileName,
             entryPoint: preview.entryPoint,
-            processedHtml: preview.processedHtml || null, // Already a string
+            processedHtml: preview.processedHtml || null, // Keeping for data consistency
             securityWarning: preview.securityWarning || null,
         } : null;
         

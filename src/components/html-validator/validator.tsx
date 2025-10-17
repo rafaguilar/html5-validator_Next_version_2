@@ -15,7 +15,7 @@ export function Validator() {
 
   useEffect(() => {
     // This effect will run once when the component mounts.
-    console.log("[TRACE] Validator.tsx: Component mounted. Adding comprehensive tracing.");
+    console.log("[TRACE] Validator.tsx: Component mounted.");
   }, []);
 
 
@@ -40,7 +40,6 @@ export function Validator() {
     const allResults: ValidationResult[] = [];
 
     for (const file of selectedFiles) {
-      let previewResult: PreviewResult | null = null;
       let finalResult: ValidationResult | null = null;
       try {
         console.log(`[TRACE] Validator.tsx: Starting client-side validation for ${file.name}.`);
@@ -63,24 +62,14 @@ export function Validator() {
             console.error(`[TRACE] Validator.tsx: Server returned an error for ${file.name}.`, serverOutcome.error);
             throw new Error(serverOutcome.error || 'Unknown error from process-file API');
         }
-
-        // The preview functionality depends on serverOutcome.previewId and serverOutcome.entryPoint
+        
+        let previewResult: PreviewResult | null = null;
         if (serverOutcome.previewId && serverOutcome.entryPoint) {
-            
-            // To properly sandbox and handle relative paths, we'll create the srcDoc on the client
-            // using the HTML content we already have from `runClientSideValidation`.
-            let processedHtml = validationPart.htmlContent || '';
-            if (processedHtml) {
-                const baseHref = `/api/preview/${serverOutcome.previewId}/`;
-                const headWithBase = `<head><base href="${baseHref}" />`;
-                processedHtml = processedHtml.replace(/<head>/i, headWithBase);
-            }
-          
             previewResult = {
                 id: serverOutcome.previewId,
                 fileName: file.name,
                 entryPoint: serverOutcome.entryPoint,
-                processedHtml: processedHtml, // This now contains the <base> tag
+                processedHtml: null, // No longer used, src is set directly
                 securityWarning: serverOutcome.securityWarning || null,
             };
             console.log(`[TRACE] Validator.tsx: Successfully created previewResult object for ${file.name}`);
@@ -117,7 +106,6 @@ export function Validator() {
           }],
           preview: null
         };
-        // If client-side validation ran, merge its results
         const existingValidationPart = finalResult ? (({ status, issues, ...rest }) => rest)(finalResult) : {};
         allResults.push({ ...errorResult, ...existingValidationPart });
       }

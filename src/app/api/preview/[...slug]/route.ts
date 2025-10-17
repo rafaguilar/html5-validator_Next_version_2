@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
 import mime from 'mime-types';
+import { getGsapControllerScript } from '@/lib/gsap-controller';
 
 const TEMP_DIR = '/tmp/html-validator-previews';
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
@@ -79,6 +80,41 @@ export async function GET(
         status: 404,
         headers: { 'Content-Type': 'text/plain' },
     });
+  }
+
+  // If the requested file is an HTML file, inject the controller script
+  if (fileData.contentType === 'text/html') {
+    try {
+      const controllerScript = await getGsapControllerScript();
+      const controllerScriptTag = `<script data-banner-id="${previewId}">${controllerScript}</script>`;
+      
+      let htmlContent = fileData.buffer.toString('utf-8');
+      
+      // Inject the script into the head
+      if (htmlContent.includes('</head>')) {
+        htmlContent = htmlContent.replace('</head>', `${controllerScriptTag}\n</head>`);
+      } else {
+        htmlContent = controllerScriptTag + htmlContent;
+      }
+      
+      const modifiedBuffer = Buffer.from(htmlContent, 'utf-8');
+
+      return new NextResponse(modifiedBuffer, {
+        status: 200,
+        headers: {
+          'Content-Type': fileData.contentType,
+          'Content-Length': modifiedBuffer.length.toString(),
+        },
+      });
+
+    } catch (scriptError) {
+        console.error('[API/preview] Failed to inject controller script:', scriptError);
+        // Serve original HTML if script injection fails
+        return new NextResponse(fileData.buffer, {
+          status: 200,
+          headers: { 'Content-Type': fileData.contentType },
+        });
+    }
   }
   
   return new NextResponse(fileData.buffer, {

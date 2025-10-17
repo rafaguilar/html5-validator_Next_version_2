@@ -6,6 +6,17 @@
 
     // This is a reliable way to get the bannerId from the script tag that loaded this file.
     var bannerId = document.currentScript ? document.currentScript.getAttribute('data-banner-id') : null;
+    
+    if (!bannerId) {
+        // Fallback for browsers that might not support currentScript in all contexts
+        var scripts = document.getElementsByTagName('script');
+        for (var i = 0; i < scripts.length; i++) {
+            if (scripts[i].hasAttribute('data-banner-id')) {
+                bannerId = scripts[i].getAttribute('data-banner-id');
+                break;
+            }
+        }
+    }
 
     if (!bannerId) {
         console.error('[Studio Controller] Could not determine bannerId. Controller will not function.');
@@ -23,14 +34,6 @@
     function findGsap() {
         if (window.gsap && typeof window.gsap.exportRoot === 'function') {
             return window.gsap;
-        }
-        if (window.TimelineLite && typeof window.TimelineLite.exportRoot === 'function') {
-            // Older GSAP (v1/v2) might use TimelineLite on the window
-            return window.TimelineLite;
-        }
-        if (window.TweenLite) {
-            // Very old GSAP might just have TweenLite
-            return window.TweenLite;
         }
         return null;
     }
@@ -59,17 +62,17 @@
                 } catch(e) {
                     console.warn('[Studio Controller] Error exporting GSAP root timeline:', e);
                     canControl = false;
-                    parent.postMessage({ bannerId: bannerId, status: 'ready', isPlaying: false, canControl: false }, '*');
+                    parent.postMessage({ bannerId: bannerId, status: 'ready', isPlaying: false, canControl: false, error: 'Could not export GSAP timeline.' }, '*');
                 }
             } else {
                  console.warn('[Studio Controller] GSAP found, but exportRoot() is not available. Control is disabled.');
                  canControl = false;
-                 parent.postMessage({ bannerId: bannerId, status: 'ready', isPlaying: false, canControl: false }, '*');
+                 parent.postMessage({ bannerId: bannerId, status: 'ready', isPlaying: false, canControl: false, error: 'GSAP version does not support timeline export.' }, '*');
             }
         } else {
             // GSAP not found after timeout
             canControl = false;
-            parent.postMessage({ bannerId: bannerId, status: 'ready', isPlaying: false, canControl: false }, '*');
+            parent.postMessage({ bannerId: bannerId, status: 'ready', isPlaying: false, canControl: false, error: 'GSAP library not found in creative.' }, '*');
         }
     }
     

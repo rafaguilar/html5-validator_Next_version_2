@@ -14,20 +14,18 @@ const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 async function cleanup(id: string): Promise<void> {
   const previewDir = path.join(TEMP_DIR, id);
   try {
-    const stats = await fs.stat(previewDir);
-    if (stats.isDirectory()) {
-      await fs.rm(previewDir, { recursive: true, force: true });
-    }
+    await fs.rm(previewDir, { recursive: true, force: true });
+    console.log(`[Scheduler] Successfully cleaned up preview directory ${id}.`);
   } catch (error: any) {
     if (error.code !== 'ENOENT') { // Ignore error if directory doesn't exist
-      console.error(`Failed to cleanup preview directory ${id}:`, error);
+      console.error(`[Scheduler] Failed to cleanup preview directory ${id}:`, error);
     }
   }
 }
 
 function scheduleCleanup(id: string) {
     setTimeout(() => {
-      cleanup(id).catch(err => console.error(`[Scheduler] Failed to cleanup ${id}:`, err));
+      cleanup(id);
     }, CACHE_TTL_MS);
 }
   
@@ -56,14 +54,12 @@ export async function POST(request: NextRequest) {
     const textFileContents: { name: string; content: string }[] = [];
     const textFileExtensions = ['.html', '.css', '.js', '.json', '.txt', '.svg', '.xml'];
 
-    const fileEntries = Object.values(zip.files);
-    
     // Ensure the preview directory exists before writing files
     await fs.mkdir(previewDir, { recursive: true });
     
-    const writePromises = fileEntries.map(async (entry) => {
+    for (const entry of Object.values(zip.files)) {
         if (entry.dir || entry.name.startsWith('__MACOSX/')) {
-          return;
+          continue;
         }
 
         filePaths.push(entry.name);
@@ -85,11 +81,9 @@ export async function POST(request: NextRequest) {
                 console.warn(`[TRACE] /api/process-file: Could not read file ${entry.name} as text for AI analysis.`);
             }
         }
-    });
-
-    console.log(`[TRACE] /api/process-file: Starting to write ${writePromises.length} files to disk.`);
-    await Promise.all(writePromises);
-    console.log('[TRACE] /api/process-file: Completed all file writes.');
+    }
+    
+    console.log(`[TRACE] /api/process-file: Completed all file writes to ${previewDir}.`);
 
     const timestampPath = path.join(previewDir, '.timestamp');
     await fs.writeFile(timestampPath, Date.now().toString());
@@ -99,6 +93,7 @@ export async function POST(request: NextRequest) {
     const entryPoint = findHtmlFile(filePaths);
     if (!entryPoint) {
       console.error('[TRACE] /api/process-file: No HTML entry point found.');
+      await cleanup(previewId);
       return NextResponse.json({ error: 'No HTML file found in the ZIP archive.' }, { status: 400 });
     }
     console.log(`[TRACE] /api/process-file: Found HTML entry point: ${entryPoint}`);
@@ -112,7 +107,6 @@ export async function POST(request: NextRequest) {
         console.warn(`[TRACE] /api/process-file: AI security analysis failed, but continuing. Error:`, aiError);
         securityWarning = 'AI security analysis could not be performed.';
     }
-
 
     const result = { previewId, entryPoint, securityWarning };
     console.log('[TRACE] /api/process-file: Successfully prepared result. Sending response.', result);
