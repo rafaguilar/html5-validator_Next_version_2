@@ -12,8 +12,7 @@ interface CachedFile {
   contentType: string;
 }
 
-// Path rewriting is now done at upload time, so this function is simpler.
-// This function now includes a retry mechanism for file access.
+// This function includes a retry mechanism and injects the GSAP controller script.
 async function getFile(id: string, filePath: string, bannerId: string | null): Promise<CachedFile | undefined> {
   const previewDir = path.join(TEMP_DIR, id);
   const fullPath = path.join(previewDir, filePath);
@@ -33,12 +32,14 @@ async function getFile(id: string, filePath: string, bannerId: string | null): P
             let buffer = await fs.readFile(fullPath);
             const contentType = mime.lookup(filePath) || 'application/octet-stream';
             
-            // We still need to inject the GSAP controller script on-the-fly for HTML files.
+            // If the file is an HTML file and a bannerId is present, inject the controller script.
             if (contentType === 'text/html' && bannerId) {
                 let originalHtml = buffer.toString('utf-8');
                 const controllerScript = await getGsapControllerScript();
+                // The script tag includes the bannerId so the injected script knows who it is.
                 const scriptTag = `<script data-studio-id="gsap-controller" data-banner-id="${bannerId}">${controllerScript}</script>`;
                 
+                // Avoids injecting multiple times on refresh
                 if (!originalHtml.includes('data-studio-id="gsap-controller"')) {
                      originalHtml = originalHtml.replace('</head>', `${scriptTag}\n</head>`);
                 }
@@ -50,9 +51,8 @@ async function getFile(id: string, filePath: string, bannerId: string | null): P
         } catch (e: any) {
             if (e.code === 'ENOENT' && i < 2) {
                 // File not found, wait and retry
-                await new Promise(resolve => setTimeout(resolve, 150)); // Wait 150ms
+                await new Promise(resolve => setTimeout(resolve, 150));
             } else if (e.code !== 'ENOENT') {
-                 // Log non-ENOENT errors but don't re-throw to avoid crashing the function
                  console.error(`[preview.get] Error reading file (attempt ${i+1}):`, e);
                  return undefined;
             }
@@ -72,6 +72,7 @@ export async function GET(
   { params }: { params: { slug: string[] } }
 ) {
   const { searchParams } = new URL(request.url);
+  // The bannerId is passed as a query param to identify the specific preview instance.
   const bannerId = searchParams.get('bannerId');
 
   const [previewId, ...filePathParts] = params.slug;
@@ -84,7 +85,6 @@ export async function GET(
   const fileData = await getFile(previewId, relativePath, bannerId);
 
   if (!fileData) {
-    // Return a plain text response for 404 to avoid browser MIME type errors
     return new NextResponse(`Preview asset not found or expired: /${relativePath}`, { 
         status: 404,
         headers: { 'Content-Type': 'text/plain' },
