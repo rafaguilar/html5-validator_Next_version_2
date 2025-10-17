@@ -12,54 +12,7 @@ interface CachedFile {
   contentType: string;
 }
 
-const rewriteHtmlPaths = async (htmlContent: string, previewId: string): Promise<string> => {
-    let processedHtml = htmlContent;
-    const previewDir = path.join(TEMP_DIR, previewId);
-
-    // This function recursively finds all file paths in the directory
-    const getFiles = async (dir: string): Promise<string[]> => {
-        const dirents = await fs.readdir(dir, { withFileTypes: true });
-        const files = await Promise.all(dirents.map((dirent) => {
-            const res = path.resolve(dir, dirent.name);
-            return dirent.isDirectory() ? getFiles(res) : res;
-        }));
-        return Array.prototype.concat(...files);
-    };
-
-    try {
-        const allFilePaths = await getFiles(previewDir);
-        // Create a list of asset paths relative to the preview directory root
-        const relativeAssetPaths = allFilePaths.map(f => path.relative(previewDir, f));
-
-        // Sort by length, descending. This is crucial.
-        // It ensures we replace "images/foo.jpg" before we replace "images/".
-        relativeAssetPaths.sort((a, b) => b.length - a.length);
-
-        for (const assetPath of relativeAssetPaths) {
-            // We don't need to rewrite the HTML file itself.
-            if (assetPath.toLowerCase().endsWith('.html')) continue;
-            
-            // The absolute path the browser will use to fetch the asset
-            const absoluteUrl = `/api/preview/${previewId}/${assetPath}`;
-
-            // Create a very broad but effective regex to find relative paths.
-            // This looks for src="...", href='...', or url(...) that is NOT preceded
-            // by 'http', 'https', 'data:', or a leading '/'.
-            // This is more robust than just replacing the assetPath string.
-            const regex = new RegExp(`(src|href|poster|data-src|xlink:href)=["'](?!https?://|data:|//|/)${assetPath}["']`, 'g');
-            processedHtml = processedHtml.replace(regex, `$1="${absoluteUrl}"`);
-
-            // Add a regex for CSS `url()` function calls
-            const cssUrlRegex = new RegExp(`url\\(["']?(?!https?://|data:|//|/)${assetPath}["']?\\)`, 'g');
-            processedHtml = processedHtml.replace(cssUrlRegex, `url(${absoluteUrl})`);
-        }
-    } catch(e) {
-        console.error("[Path Rewrite] Failed to rewrite paths, previews may be broken.", e);
-    }
-    
-    return processedHtml;
-};
-
+// Path rewriting is now done at upload time, so this function is simpler.
 async function getFile(id: string, filePath: string, bannerId: string | null): Promise<CachedFile | undefined> {
   const previewDir = path.join(TEMP_DIR, id);
   const fullPath = path.join(previewDir, filePath);
@@ -78,19 +31,14 @@ async function getFile(id: string, filePath: string, bannerId: string | null): P
             let buffer = await fs.readFile(fullPath);
             const contentType = mime.lookup(filePath) || 'application/octet-stream';
             
-            if (contentType === 'text/html') {
+            // We still need to inject the GSAP controller script on-the-fly for HTML files.
+            if (contentType === 'text/html' && bannerId) {
                 let originalHtml = buffer.toString('utf-8');
+                const controllerScript = await getGsapControllerScript();
+                const scriptTag = `<script data-studio-id="gsap-controller" data-banner-id="${bannerId}">${controllerScript}</script>`;
                 
-                // 1. Aggressively rewrite all relative asset paths to be absolute
-                originalHtml = await rewriteHtmlPaths(originalHtml, id);
-                
-                // 2. Inject the GSAP controller script if bannerId is present
-                if (bannerId) {
-                    const controllerScript = await getGsapControllerScript();
-                    const scriptTag = `<script data-studio-id="gsap-controller" data-banner-id="${bannerId}">${controllerScript}</script>`;
-                    if (!originalHtml.includes('data-studio-id="gsap-controller"')) {
-                         originalHtml = originalHtml.replace('</head>', `${scriptTag}\n</head>`);
-                    }
+                if (!originalHtml.includes('data-studio-id="gsap-controller"')) {
+                     originalHtml = originalHtml.replace('</head>', `${scriptTag}\n</head>`);
                 }
                 
                 buffer = Buffer.from(originalHtml, 'utf-8');
