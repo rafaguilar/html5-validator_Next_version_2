@@ -13,6 +13,7 @@ interface CachedFile {
 }
 
 // Path rewriting is now done at upload time, so this function is simpler.
+// This function now includes a retry mechanism for file access.
 async function getFile(id: string, filePath: string, bannerId: string | null): Promise<CachedFile | undefined> {
   const previewDir = path.join(TEMP_DIR, id);
   const fullPath = path.join(previewDir, filePath);
@@ -26,6 +27,7 @@ async function getFile(id: string, filePath: string, bannerId: string | null): P
       return undefined; // Expired
     }
   
+    // Add retry logic for file system propagation delay
     for (let i = 0; i < 3; i++) {
         try {
             let buffer = await fs.readFile(fullPath);
@@ -47,14 +49,16 @@ async function getFile(id: string, filePath: string, bannerId: string | null): P
             return { buffer, contentType };
         } catch (e: any) {
             if (e.code === 'ENOENT' && i < 2) {
-                await new Promise(resolve => setTimeout(resolve, 150));
+                // File not found, wait and retry
+                await new Promise(resolve => setTimeout(resolve, 150)); // Wait 150ms
             } else if (e.code !== 'ENOENT') {
+                 // Log non-ENOENT errors but don't re-throw to avoid crashing the function
                  console.error(`[preview.get] Error reading file (attempt ${i+1}):`, e);
                  return undefined;
             }
         }
     }
-    return undefined;
+    return undefined; // Return undefined after all retries fail
   } catch (error: any) {
     if (error.code !== 'ENOENT') {
         console.error(`[preview.get] Critical error for preview ${id}/${filePath}:`, error);
@@ -80,6 +84,7 @@ export async function GET(
   const fileData = await getFile(previewId, relativePath, bannerId);
 
   if (!fileData) {
+    // Return a plain text response for 404 to avoid browser MIME type errors
     return new NextResponse(`Preview asset not found or expired: /${relativePath}`, { 
         status: 404,
         headers: { 'Content-Type': 'text/plain' },
