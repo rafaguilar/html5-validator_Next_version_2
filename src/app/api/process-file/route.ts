@@ -31,28 +31,35 @@ function scheduleCleanup(id: string) {
     }, CACHE_TTL_MS);
 }
 
-// This function rewrites relative paths in a given file content string.
-const rewriteFileContentPaths = (content: string, previewId: string, allFilePaths: string[]): string => {
+// This function robustly rewrites relative paths in a given file content string.
+const rewriteFileContentPaths = (content: string, previewId: string, allFilePathsInZip: string[]): string => {
     let processedContent = content;
 
     // Sort by length, descending. Crucial to replace "images/foo.jpg" before "images/".
-    const sortedAssetPaths = [...allFilePaths].sort((a, b) => b.length - a.length);
+    const sortedAssetPaths = [...allFilePathsInZip].sort((a, b) => b.length - a.length);
 
     for (const assetPath of sortedAssetPaths) {
+        // Don't rewrite paths to other HTML files
         if (assetPath.toLowerCase().endsWith('.html')) continue;
 
         const absoluteUrl = `/api/preview/${previewId}/${assetPath}`;
         
-        // Regex for src="...", href='...', etc.
-        const attrRegex = new RegExp(`(src|href|poster|data-src|xlink:href)=["'](?!https?://|data:|//|/)${assetPath}["']`, 'g');
+        // Escape special characters in assetPath for regex
+        const escapedAssetPath = assetPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+        // Regex for attributes like src="...", href='...', etc.
+        // It looks for src/href/poster attributes with a relative path.
+        const attrRegex = new RegExp(`(src|href|poster|data-src|xlink:href)=["'](?!https?://|data:|//|/)${escapedAssetPath}["']`, 'g');
         processedContent = processedContent.replace(attrRegex, `$1="${absoluteUrl}"`);
 
         // Regex for CSS url(...)
-        const cssUrlRegex = new RegExp(`url\\(["']?(?!https?://|data:|//|/)${assetPath}["']?\\)`, 'g');
+        // It looks for url() with a relative path.
+        const cssUrlRegex = new RegExp(`url\\(["']?(?!https?://|data:|//|/)${escapedAssetPath}["']?\\)`, 'g');
         processedContent = processedContent.replace(cssUrlRegex, `url("${absoluteUrl}")`);
         
-        // Regex for JavaScript string literals
-        const jsStringRegex = new RegExp(`["']${assetPath}["']`, 'g');
+        // Regex for simple string literals in JavaScript
+        // This is the most likely to have false positives but is necessary for many creatives.
+        const jsStringRegex = new RegExp(`["']${escapedAssetPath}["']`, 'g');
         processedContent = processedContent.replace(jsStringRegex, `"${absoluteUrl}"`);
     }
     return processedContent;
@@ -80,35 +87,34 @@ export async function POST(request: NextRequest) {
     console.log('[TRACE] /api/process-file: Loaded ZIP file into JSZip.');
     
     const textFileExtensions = ['.html', '.css', '.js', '.json', '.txt', '.svg', '.xml'];
-    const allFilePathsInZip = Object.keys(zip.files).filter(path => !zip.files[path].dir && !path.startsWith("__MACOSX/"));
+    const allFilePathsInZip = Object.keys(zip.files).filter(p => !zip.files[p].dir && !p.startsWith("__MACOSX/"));
 
     const textFileContentsForAI: { name: string; content: string }[] = [];
 
     await fs.mkdir(previewDir, { recursive: true });
 
-    for (const entry of Object.values(zip.files)) {
-        if (entry.dir || entry.name.startsWith('__MACOSX/')) {
-          continue;
-        }
+    for (const entryPath of allFilePathsInZip) {
+        const entry = zip.files[entryPath];
+        if (entry.dir) continue;
 
         const fullPath = path.join(previewDir, entry.name);
         const dirName = path.dirname(fullPath);
         await fs.mkdir(dirName, { recursive: true });
 
         const fileExt = path.extname(entry.name).toLowerCase();
-        let fileContent = await entry.async('nodebuffer');
+        let fileContentBuffer = await entry.async('nodebuffer');
 
         // If it's a text file, read its content, rewrite paths, and then prepare to write
         if (textFileExtensions.includes(fileExt)) {
-            let contentStr = fileContent.toString('utf-8');
+            let contentStr = fileContentBuffer.toString('utf-8');
             textFileContentsForAI.push({ name: entry.name, content: contentStr }); // For AI analysis with original content
             
             // Rewrite paths before writing to disk
             const rewrittenContent = rewriteFileContentPaths(contentStr, previewId, allFilePathsInZip);
-            fileContent = Buffer.from(rewrittenContent, 'utf-8');
+            fileContentBuffer = Buffer.from(rewrittenContent, 'utf-8');
         }
 
-        await fs.writeFile(fullPath, fileContent);
+        await fs.writeFile(fullPath, fileContentBuffer);
     }
     console.log('[TRACE] /api/process-file: Completed all file writes after path rewriting.');
 
@@ -120,6 +126,7 @@ export async function POST(request: NextRequest) {
     const entryPoint = findHtmlFile(allFilePathsInZip);
     if (!entryPoint) {
       console.error('[TRACE] /api/process-file: No HTML entry point found.');
+      await cleanup(previewId);
       return NextResponse.json({ error: 'No HTML file found in the ZIP archive.' }, { status: 400 });
     }
     console.log(`[TRACE] /api/process-file: Found HTML entry point: ${entryPoint}`);

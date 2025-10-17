@@ -12,10 +12,16 @@ interface CachedFile {
   contentType: string;
 }
 
-// This function includes a retry mechanism and injects the GSAP controller script.
+// This function includes a retry mechanism for file system reads.
 async function getFile(id: string, filePath: string, bannerId: string | null): Promise<CachedFile | undefined> {
   const previewDir = path.join(TEMP_DIR, id);
   const fullPath = path.join(previewDir, filePath);
+
+  // Security check: ensure the resolved path is still within the preview directory
+  if (!fullPath.startsWith(previewDir)) {
+      console.error(`[preview.get] Path traversal attempt blocked: ${filePath}`);
+      return undefined;
+  }
 
   try {
     const timestampPath = path.join(previewDir, '.timestamp');
@@ -36,7 +42,6 @@ async function getFile(id: string, filePath: string, bannerId: string | null): P
             if (contentType === 'text/html' && bannerId) {
                 let originalHtml = buffer.toString('utf-8');
                 const controllerScript = await getGsapControllerScript();
-                // The script tag includes the bannerId so the injected script knows who it is.
                 const scriptTag = `<script data-studio-id="gsap-controller" data-banner-id="${bannerId}">${controllerScript}</script>`;
                 
                 // Avoids injecting multiple times on refresh
@@ -51,8 +56,12 @@ async function getFile(id: string, filePath: string, bannerId: string | null): P
         } catch (e: any) {
             if (e.code === 'ENOENT' && i < 2) {
                 // File not found, wait and retry
+                console.warn(`[preview.get] File not found on attempt ${i+1}, retrying: ${fullPath}`);
                 await new Promise(resolve => setTimeout(resolve, 150));
-            } else if (e.code !== 'ENOENT') {
+            } else if (e.code === 'ENOENT') {
+                console.error(`[preview.get] File not found after all retries: ${fullPath}`, e);
+                return undefined;
+            } else {
                  console.error(`[preview.get] Error reading file (attempt ${i+1}):`, e);
                  return undefined;
             }
@@ -76,7 +85,8 @@ export async function GET(
   const bannerId = searchParams.get('bannerId');
 
   const [previewId, ...filePathParts] = params.slug;
-  const relativePath = filePathParts.join('/');
+  // Re-join the path, ensuring it's properly decoded
+  const relativePath = filePathParts.map(part => decodeURIComponent(part)).join('/');
 
   if (!previewId || !relativePath) {
     return new NextResponse('Invalid request', { status: 400 });
