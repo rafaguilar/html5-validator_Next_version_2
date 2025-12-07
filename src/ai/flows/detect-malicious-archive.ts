@@ -8,8 +8,8 @@
  * - MaliciousArchiveOutput - The return type for the function.
  */
 
-import { ai } from '@/ai/genkit';
-import { z } from 'genkit';
+import {ai} from '@/ai/genkit';
+import {z} from 'genkit';
 
 const MaliciousArchiveInputSchema = z.array(z.object({
     name: z.string().describe('The name of the file.'),
@@ -24,7 +24,6 @@ const MaliciousArchiveOutputSchema = z.object({
 });
 
 export type MaliciousArchiveOutput = z.infer<typeof MaliciousArchiveOutputSchema>;
-
 
 const maliciousCodePrompt = ai.definePrompt({
     name: 'maliciousCodePrompt',
