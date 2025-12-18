@@ -1,18 +1,19 @@
+
 import type {Metadata} from 'next';
-import { Geist, Geist_Mono } from 'next/font/google';
+import { Geist_Sans, Geist_Mono } from 'next/font/local';
 import './globals.css';
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/toaster";
 import { FirebaseProvider } from '@/components/firebase/firebase-provider';
 
-const geistSans = Geist({
+const geistSans = Geist_Sans({
   variable: '--font-geist-sans',
-  subsets: ['latin'],
+  src: '../../../node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2',
 });
 
 const geistMono = Geist_Mono({
   variable: '--font-geist-mono',
-  subsets: ['latin'],
+  src: '../../../node_modules/geist/dist/fonts/geist-mono/GeistMono-Variable.woff2',
 });
 
 export const metadata: Metadata = {
