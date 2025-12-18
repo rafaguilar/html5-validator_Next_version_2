@@ -1,6 +1,6 @@
 
 import type {Metadata} from 'next';
-import { Geist_Sans, Geist_Mono } from 'geist/font';
+import { GeistSans, GeistMono } from 'geist/font';
 import './globals.css';
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/toaster";
@@ -18,7 +18,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning={true}>
-      <body className={`${Geist_Sans.variable} ${Geist_Mono.variable} antialiased font-sans`}>
+      <body className={`${GeistSans.variable} ${GeistMono.variable} antialiased font-sans`}>
         <FirebaseProvider>
           <TooltipProvider>
             {children}
