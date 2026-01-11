@@ -1,3 +1,4 @@
+
 'use server';
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -47,7 +48,8 @@ export async function POST(request: NextRequest) {
   try {
     const buffer = Buffer.from(await file.arrayBuffer());
     console.log('[TRACE] /api/process-file: Reading file into buffer.');
-    const zip = await JSZip.loadAsync(buffer);
+    // The `checkCRC32: false` option makes JSZip more tolerant of certain zip file inconsistencies.
+    const zip = await JSZip.loadAsync(buffer, { checkCRC32: false });
     console.log('[TRACE] /api/process-file: Loaded ZIP file into JSZip.');
     
     const filePaths: string[] = [];
@@ -62,24 +64,26 @@ export async function POST(request: NextRequest) {
           continue;
         }
 
-        filePaths.push(entry.name);
-        const fileBuffer = await entry.async('nodebuffer');
-        
-        const fullPath = path.join(previewDir, entry.name);
-        const dirName = path.dirname(fullPath);
-        await fs.mkdir(dirName, { recursive: true });
-        await fs.writeFile(fullPath, fileBuffer);
+        try {
+            const fileBuffer = await entry.async('nodebuffer');
+            filePaths.push(entry.name);
+            
+            const fullPath = path.join(previewDir, entry.name);
+            const dirName = path.dirname(fullPath);
+            await fs.mkdir(dirName, { recursive: true });
+            await fs.writeFile(fullPath, fileBuffer);
 
-        const fileExt = (/\.([^.]+)$/.exec(entry.name) || [''])[0].toLowerCase();
-        if (textFileExtensions.includes(fileExt)) {
-            try {
+            const fileExt = (/\.([^.]+)$/.exec(entry.name) || [''])[0].toLowerCase();
+            if (textFileExtensions.includes(fileExt)) {
                 textFileContents.push({
                     name: entry.name,
                     content: fileBuffer.toString('utf-8')
                 });
-            } catch (e) {
-                console.warn(`[TRACE] /api/process-file: Could not read file ${entry.name} as text for AI analysis.`);
             }
+        } catch (e: any) {
+            // This catch block handles errors for individual files, like the "data size mismatch" error.
+            // By catching it here, we can skip the problematic file and continue processing others.
+            console.warn(`[TRACE] /api/process-file: Skipping problematic file '${entry.name}' due to error: ${e.message}`);
         }
     }
     
