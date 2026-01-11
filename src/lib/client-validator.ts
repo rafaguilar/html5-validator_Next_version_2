@@ -87,20 +87,12 @@ const findClickTagsInHtml = (htmlContent: string | null): ClickTagInfo[] => {
   return clickTags;
 };
 
-const validateAssetPaths = (htmlContent: string | null, allFilePathsInZip: string[]): ValidationIssue[] => {
-  if (!htmlContent) return [];
-
-  const issues: ValidationIssue[] = [];
-  const assetPathRegex = /(?:href|src)=["'](?!(?:https?:\/\/|data:|#))([^"']+)["']/g;
-  const zipFileSet = new Set(allFilePathsInZip);
-
-  let match;
-  while ((match = assetPathRegex.exec(htmlContent)) !== null) {
-    const referencedPath = match[1];
+const checkAssetPathCase = (referencedPath: string, allFilePathsInZip: string[], zipFileSet: Set<string>): ValidationIssue | null => {
+    // Ignore empty paths, absolute URLs, data URIs, or anchor links
+    if (!referencedPath || referencedPath.startsWith('#') || referencedPath.includes(':')) {
+        return null;
+    }
     
-    // Ignore empty paths or anchor links
-    if (!referencedPath || referencedPath.startsWith('#')) continue;
-
     // We have the path as it's written in the code.
     // We need to check if it exists in the ZIP file Set with the exact same case.
     if (!zipFileSet.has(referencedPath)) {
@@ -110,20 +102,60 @@ const validateAssetPaths = (htmlContent: string | null, allFilePathsInZip: strin
       
       if (foundFile) {
         // A file with a different case exists. This is a case-sensitivity error.
-        const message = `Asset path case mismatch for '${referencedPath}'.`;
-        const details = `The HTML references '${referencedPath}', but the actual file in the ZIP is named '${foundFile}'. File systems on web servers are case-sensitive.`;
-        issues.push(createIssue('error', message, details, 'asset-path-case-mismatch'));
+        const message = `Asset path case mismatch: '${referencedPath}'.`;
+        const details = `The file references '${referencedPath}', but the actual file in the ZIP is named '${foundFile}'. File systems on web servers are case-sensitive. This will cause a 404 error.`;
+        return createIssue('error', message, details, 'asset-path-case-mismatch');
       } else {
         // The file truly doesn't exist at all. This might be a simple broken link.
         const message = `Asset not found in ZIP: '${referencedPath}'.`;
-        const details = `The file '${referencedPath}' is referenced in the HTML but was not found in the uploaded archive. Check for typos.`;
-        issues.push(createIssue('warning', message, details, 'asset-path-not-found'));
+        const details = `The file '${referencedPath}' is referenced but was not found in the uploaded archive. Check for typos or missing files.`;
+        return createIssue('warning', message, details, 'asset-path-not-found');
       }
+    }
+    return null;
+};
+
+
+const validateHtmlAssetPaths = (htmlContent: string | null, allFilePathsInZip: string[]): ValidationIssue[] => {
+  if (!htmlContent) return [];
+
+  const issues: ValidationIssue[] = [];
+  const assetPathRegex = /(?:href|src)=["'](?!(?:https?:\/\/|data:|#))([^"']+)["']/g;
+  const zipFileSet = new Set(allFilePathsInZip);
+
+  let match;
+  while ((match = assetPathRegex.exec(htmlContent)) !== null) {
+    const issue = checkAssetPathCase(match[1], allFilePathsInZip, zipFileSet);
+    if (issue) {
+      issues.push(issue);
     }
   }
 
   return issues;
 }
+
+const validateCssAssetPaths = async (zip: JSZip, allFilePathsInZip: string[]): Promise<ValidationIssue[]> => {
+    const issues: ValidationIssue[] = [];
+    const cssUrlRegex = /url\((?!['"]?(?:data|https?):)['"]?([^'")]+)['"]?\)/g;
+    const zipFileSet = new Set(allFilePathsInZip);
+
+    const cssFiles = Object.values(zip.files).filter(f => f.name.toLowerCase().endsWith('.css') && !f.dir);
+
+    for (const cssFile of cssFiles) {
+        const cssContent = await cssFile.async('string');
+        let match;
+        while ((match = cssUrlRegex.exec(cssContent)) !== null) {
+            const referencedPath = match[1];
+            const issue = checkAssetPathCase(referencedPath, allFilePathsInZip, zipFileSet);
+            if (issue) {
+                // Add context about where the issue was found
+                issue.details = `In file '${cssFile.name}': ${issue.details}`;
+                issues.push(issue);
+            }
+        }
+    }
+    return issues;
+};
 
 
 interface CreativeAssetAnalysis {
@@ -180,7 +212,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
       }
     }
   
-    return { foundHtmlPath, htmlContent: htmlContentForAnalysis, issues, htmlFileCount, allHtmlFilePathsInZip, isAdobeAnimateProject, isCreatopyProject, zip };
+    return { foundHtmlPath, htmlContent: htmlContentForAnalysis, issues, htmlFileCount, allHtmlFilePathsInZip: allZipFiles, isAdobeAnimateProject, isCreatopyProject, zip };
 };
 
 export const runClientSideValidation = async (file: File): Promise<Omit<ValidationResult, 'id' | 'fileName' | 'fileSize' | 'preview'>> => {
@@ -208,7 +240,7 @@ export const runClientSideValidation = async (file: File): Promise<Omit<Validati
         issues.push(createIssue('error', message, details, 'no-html-file'));
     } else if (analysis.htmlFileCount > 1) {
         const message = 'Multiple HTML files found in ZIP.';
-        const details = `Found: ${analysis.allHtmlFilePathsInZip.join(', ')}. The validator will analyze the most likely primary file: ${analysis.foundHtmlPath}`;
+        const details = `Found: ${analysis.allHtmlFilePathsInZip.filter(p => p.toLowerCase().endsWith('.html')).join(', ')}. The validator will analyze the most likely primary file: ${analysis.foundHtmlPath}`;
         issues.push(createIssue('warning', message, details, 'multiple-html-files'));
     }
 
@@ -223,8 +255,12 @@ export const runClientSideValidation = async (file: File): Promise<Omit<Validati
 
     if (analysis.htmlContent) {
         issues.push(...lintHtmlContent(analysis.htmlContent, analysis.isCreatopyProject));
-        issues.push(...validateAssetPaths(analysis.htmlContent, analysis.allHtmlFilePathsInZip));
+        issues.push(...validateHtmlAssetPaths(analysis.htmlContent, analysis.allHtmlFilePathsInZip));
     }
+    
+    // New check for assets in CSS
+    issues.push(...await validateCssAssetPaths(analysis.zip, analysis.allHtmlFilePathsInZip));
+
 
     let actualMetaWidth: number | undefined, actualMetaHeight: number | undefined;
     if (analysis.htmlContent) {
