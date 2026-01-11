@@ -87,6 +87,45 @@ const findClickTagsInHtml = (htmlContent: string | null): ClickTagInfo[] => {
   return clickTags;
 };
 
+const validateAssetPaths = (htmlContent: string | null, allFilePathsInZip: string[]): ValidationIssue[] => {
+  if (!htmlContent) return [];
+
+  const issues: ValidationIssue[] = [];
+  const assetPathRegex = /(?:href|src)=["'](?!(?:https?:\/\/|data:|#))([^"']+)["']/g;
+  const zipFileSet = new Set(allFilePathsInZip);
+
+  let match;
+  while ((match = assetPathRegex.exec(htmlContent)) !== null) {
+    const referencedPath = match[1];
+    
+    // Ignore empty paths or anchor links
+    if (!referencedPath || referencedPath.startsWith('#')) continue;
+
+    // We have the path as it's written in the code.
+    // We need to check if it exists in the ZIP file Set with the exact same case.
+    if (!zipFileSet.has(referencedPath)) {
+      // If it doesn't exist, we check for a case-insensitive match to provide a more helpful error.
+      const lowerCasePath = referencedPath.toLowerCase();
+      const foundFile = allFilePathsInZip.find(zipPath => zipPath.toLowerCase() === lowerCasePath);
+      
+      if (foundFile) {
+        // A file with a different case exists. This is a case-sensitivity error.
+        const message = `Asset path case mismatch for '${referencedPath}'.`;
+        const details = `The HTML references '${referencedPath}', but the actual file in the ZIP is named '${foundFile}'. File systems on web servers are case-sensitive.`;
+        issues.push(createIssue('error', message, details, 'asset-path-case-mismatch'));
+      } else {
+        // The file truly doesn't exist at all. This might be a simple broken link.
+        const message = `Asset not found in ZIP: '${referencedPath}'.`;
+        const details = `The file '${referencedPath}' is referenced in the HTML but was not found in the uploaded archive. Check for typos.`;
+        issues.push(createIssue('warning', message, details, 'asset-path-not-found'));
+      }
+    }
+  }
+
+  return issues;
+}
+
+
 interface CreativeAssetAnalysis {
   foundHtmlPath?: string;
   htmlContent?: string;
@@ -184,6 +223,7 @@ export const runClientSideValidation = async (file: File): Promise<Omit<Validati
 
     if (analysis.htmlContent) {
         issues.push(...lintHtmlContent(analysis.htmlContent, analysis.isCreatopyProject));
+        issues.push(...validateAssetPaths(analysis.htmlContent, analysis.allHtmlFilePathsInZip));
     }
 
     let actualMetaWidth: number | undefined, actualMetaHeight: number | undefined;
