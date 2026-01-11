@@ -1,6 +1,7 @@
 
 import JSZip from 'jszip';
 import { HTMLHint, type LintResult, type RuleSet } from 'htmlhint';
+import path from 'path-browserify';
 import type { ValidationResult, ValidationIssue, ClickTagInfo } from '@/types';
 
 // New tiered file size limits
@@ -87,36 +88,39 @@ const findClickTagsInHtml = (htmlContent: string | null): ClickTagInfo[] => {
   return clickTags;
 };
 
-const checkAssetPathCase = (referencedPath: string, allFilePathsInZip: string[], zipFileSet: Set<string>): ValidationIssue | null => {
-    // Ignore empty paths, absolute URLs, data URIs, or anchor links
-    if (!referencedPath || referencedPath.startsWith('#') || referencedPath.includes(':')) {
+const checkAssetPathCase = (
+    originalPath: string,
+    containingFilePath: string,
+    allZipFilePaths: string[],
+    zipFileSet: Set<string>
+): ValidationIssue | null => {
+    if (!originalPath || originalPath.startsWith('#') || originalPath.includes(':') || originalPath.trim() === '') {
         return null;
     }
+
+    const containingDir = path.dirname(containingFilePath);
+    const resolvedPath = path.normalize(path.join(containingDir, originalPath));
     
-    // We have the path as it's written in the code.
-    // We need to check if it exists in the ZIP file Set with the exact same case.
-    if (!zipFileSet.has(referencedPath)) {
-      // If it doesn't exist, we check for a case-insensitive match to provide a more helpful error.
-      const lowerCasePath = referencedPath.toLowerCase();
-      const foundFile = allFilePathsInZip.find(zipPath => zipPath.toLowerCase() === lowerCasePath);
-      
-      if (foundFile) {
-        // A file with a different case exists. This is a case-sensitivity error.
-        const message = `Asset path case mismatch: '${referencedPath}'.`;
-        const details = `The file references '${referencedPath}', but the actual file in the ZIP is named '${foundFile}'. File systems on web servers are case-sensitive. This will cause a 404 error.`;
-        return createIssue('error', message, details, 'asset-path-case-mismatch');
-      } else {
-        // The file truly doesn't exist at all. This might be a simple broken link.
-        const message = `Asset not found in ZIP: '${referencedPath}'.`;
-        const details = `The file '${referencedPath}' is referenced but was not found in the uploaded archive. Check for typos or missing files.`;
-        return createIssue('warning', message, details, 'asset-path-not-found');
-      }
+    if (!zipFileSet.has(resolvedPath)) {
+        const lowerCasePath = resolvedPath.toLowerCase();
+        const foundFile = allZipFilePaths.find(zipPath => zipPath.toLowerCase() === lowerCasePath);
+
+        if (foundFile) {
+            const message = `Asset path case mismatch in '${containingFilePath}'.`;
+            const details = `The file references '${originalPath}' which resolves to '${resolvedPath}', but the actual file in the ZIP is named '${foundFile}'. File systems on web servers are case-sensitive. This will cause a 404 error.`;
+            return createIssue('error', message, details, 'asset-path-case-mismatch');
+        } else {
+            const message = `Asset not found in ZIP: '${originalPath}'.`;
+            const details = `The file '${originalPath}' (resolved to '${resolvedPath}') referenced in '${containingFilePath}' was not found in the uploaded archive. Check for typos or missing files.`;
+            return createIssue('warning', message, details, 'asset-path-not-found');
+        }
     }
+
     return null;
 };
 
 
-const validateHtmlAssetPaths = (htmlContent: string | null, allFilePathsInZip: string[]): ValidationIssue[] => {
+const validateHtmlAssetPaths = (htmlContent: string | null, htmlFilePath: string, allFilePathsInZip: string[]): ValidationIssue[] => {
   if (!htmlContent) return [];
 
   const issues: ValidationIssue[] = [];
@@ -125,7 +129,7 @@ const validateHtmlAssetPaths = (htmlContent: string | null, allFilePathsInZip: s
 
   let match;
   while ((match = assetPathRegex.exec(htmlContent)) !== null) {
-    const issue = checkAssetPathCase(match[1], allFilePathsInZip, zipFileSet);
+    const issue = checkAssetPathCase(match[1], htmlFilePath, allFilePathsInZip, zipFileSet);
     if (issue) {
       issues.push(issue);
     }
@@ -146,10 +150,8 @@ const validateCssAssetPaths = async (zip: JSZip, allFilePathsInZip: string[]): P
         let match;
         while ((match = cssUrlRegex.exec(cssContent)) !== null) {
             const referencedPath = match[1];
-            const issue = checkAssetPathCase(referencedPath, allFilePathsInZip, zipFileSet);
+            const issue = checkAssetPathCase(referencedPath, cssFile.name, allFilePathsInZip, zipFileSet);
             if (issue) {
-                // Add context about where the issue was found
-                issue.details = `In file '${cssFile.name}': ${issue.details}`;
                 issues.push(issue);
             }
         }
@@ -163,7 +165,7 @@ interface CreativeAssetAnalysis {
   htmlContent?: string;
   issues: ValidationIssue[];
   htmlFileCount: number;
-  allHtmlFilePathsInZip: string[];
+  allFilePathsInZip: string[];
   isAdobeAnimateProject: boolean;
   isCreatopyProject: boolean;
   zip: JSZip;
@@ -212,7 +214,7 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
       }
     }
   
-    return { foundHtmlPath, htmlContent: htmlContentForAnalysis, issues, htmlFileCount, allHtmlFilePathsInZip: allZipFiles, isAdobeAnimateProject, isCreatopyProject, zip };
+    return { foundHtmlPath, htmlContent: htmlContentForAnalysis, issues, htmlFileCount, allFilePathsInZip: allZipFiles, isAdobeAnimateProject, isCreatopyProject, zip };
 };
 
 export const runClientSideValidation = async (file: File): Promise<Omit<ValidationResult, 'id' | 'fileName' | 'fileSize' | 'preview'>> => {
@@ -240,7 +242,7 @@ export const runClientSideValidation = async (file: File): Promise<Omit<Validati
         issues.push(createIssue('error', message, details, 'no-html-file'));
     } else if (analysis.htmlFileCount > 1) {
         const message = 'Multiple HTML files found in ZIP.';
-        const details = `Found: ${analysis.allHtmlFilePathsInZip.filter(p => p.toLowerCase().endsWith('.html')).join(', ')}. The validator will analyze the most likely primary file: ${analysis.foundHtmlPath}`;
+        const details = `Found: ${analysis.allFilePathsInZip.filter(p => p.toLowerCase().endsWith('.html')).join(', ')}. The validator will analyze the most likely primary file: ${analysis.foundHtmlPath}`;
         issues.push(createIssue('warning', message, details, 'multiple-html-files'));
     }
 
@@ -253,13 +255,13 @@ export const runClientSideValidation = async (file: File): Promise<Omit<Validati
         issues.push(createIssue('warning', 'No standard clickTag variable found.', 'A clickTag is required for ad tracking. Example: var clickTag = "https://www.example.com";', 'missing-clicktag'));
     }
 
-    if (analysis.htmlContent) {
+    if (analysis.htmlContent && analysis.foundHtmlPath) {
         issues.push(...lintHtmlContent(analysis.htmlContent, analysis.isCreatopyProject));
-        issues.push(...validateHtmlAssetPaths(analysis.htmlContent, analysis.allHtmlFilePathsInZip));
+        issues.push(...validateHtmlAssetPaths(analysis.htmlContent, analysis.foundHtmlPath, analysis.allFilePathsInZip));
     }
     
     // New check for assets in CSS
-    issues.push(...await validateCssAssetPaths(analysis.zip, analysis.allHtmlFilePathsInZip));
+    issues.push(...await validateCssAssetPaths(analysis.zip, analysis.allFilePathsInZip));
 
 
     let actualMetaWidth: number | undefined, actualMetaHeight: number | undefined;
